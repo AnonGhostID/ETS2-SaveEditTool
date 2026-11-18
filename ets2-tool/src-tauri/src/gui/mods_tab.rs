@@ -11,13 +11,31 @@ use crate::features::save_analysis::commands::{
     analyze_mod_conflict_diagnostics, analyze_mod_conflict_diagnostics_deep,
     export_mod_conflict_diagnostics_report,
 };
+use crate::gui::components::{self, UiExt};
 use crate::gui::{Ets2NativeApp, ModsSubTab};
 use crate::tauri::async_runtime;
 
 pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
-    ui.horizontal(|ui| {
-        ui.heading("🧩 Mod Profile Manager & Conflict Analyzer");
-        if ui.button("⟳ Load State").clicked() {
+    components::page_header(
+        ui,
+        "Mods & Conflicts",
+        "Inspect installed mods, manage presets and diagnose crashes or conflicts.",
+    );
+    ui.add_space(8.0);
+    if let Some(sub) = components::sub_tabs(
+        ui,
+        app.mods_sub_tab,
+        &[
+            (ModsSubTab::ModManager, "Discovered Mods"),
+            (ModsSubTab::PresetsAndSandboxes, "Presets & Sandboxes"),
+            (ModsSubTab::ConflictAnalyzer, "Conflict Analyzer"),
+        ],
+    ) {
+        app.mods_sub_tab = sub;
+    }
+    ui.add_space(4.0);
+    ui.horizontal_wrapped(|ui| {
+        if components::primary_button(ui, "Load State").clicked() {
             match load_mod_profile_manager_state(
                 app.app.clone(),
                 app.profile_state(),
@@ -31,7 +49,7 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                 Err(e) => app.set_status(e, true),
             }
         }
-        if ui.button("🔍 Quick Scan Mods").clicked() {
+        if ui.button("Quick Scan Mods").clicked() {
             match scan_mods_light(
                 app.app.clone(),
                 app.profile_state(),
@@ -45,7 +63,7 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                 Err(e) => app.set_status(e, true),
             }
         }
-        if ui.button("🔬 Deep Scan Mods").clicked() {
+        if ui.button("Deep Scan Mods").clicked() {
             match scan_mods_deep(
                 app.app.clone(),
                 app.profile_state(),
@@ -59,25 +77,13 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                 Err(e) => app.set_status(e, true),
             }
         }
-        if ui.button("🖥 Open Steam Console").clicked() {
+        if ui.button("Open Steam Console").clicked() {
             if let Err(e) = open_steam_console() {
                 app.set_status(e, true);
             }
         }
     });
-
-    ui.horizontal(|ui| {
-        for (sub, label) in [
-            (ModsSubTab::ModManager, "📦 Discovered Mods"),
-            (ModsSubTab::PresetsAndSandboxes, "🗂 Mod Presets & Sandboxes"),
-            (ModsSubTab::ConflictAnalyzer, "🩺 Mod Conflict & Crash Analyzer"),
-        ] {
-            if ui.selectable_label(app.mods_sub_tab == sub, label).clicked() {
-                app.mods_sub_tab = sub;
-            }
-        }
-    });
-    ui.separator();
+    ui.add_space(8.0);
 
     match app.mods_sub_tab {
         ModsSubTab::ModManager => render_mod_manager(app, ui),
@@ -155,7 +161,7 @@ fn render_mod_manager(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
 
 fn render_presets_and_sandboxes(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
     ui.columns(2, |cols| {
-        cols[0].group(|ui| {
+        cols[0].card(|ui| {
             ui.heading("Mod Presets");
             ui.horizontal(|ui| {
                 if ui.button("⟳ Load Presets").clicked() {
@@ -239,7 +245,7 @@ fn render_presets_and_sandboxes(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             }
         });
 
-        cols[1].group(|ui| {
+        cols[1].card(|ui| {
             ui.heading("Mod Sandboxes");
             if ui.button("⟳ Load Sandboxes").clicked() {
                 app.mod_sandboxes = load_mod_sandboxes(app.app.clone()).ok();
@@ -340,7 +346,7 @@ fn render_conflict_analyzer(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
     });
 
     if let Some(rep) = &app.conflict_report {
-        ui.group(|ui| {
+        ui.card(|ui| {
             ui.heading(format!(
                 "[{}] {}",
                 rep.overview.status_badge, rep.overview.summary

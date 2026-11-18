@@ -7,30 +7,37 @@ use crate::features::save_editor::commands::{
     edit_parking_doubles_value, edit_player_experience, edit_player_money, edit_save_config_value,
     edit_skill_value, edit_traffic_value, read_project_coaches,
 };
+use crate::gui::components::{self, UiExt};
 use crate::gui::Ets2NativeApp;
 
 pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
-    ui.horizontal(|ui| {
-        ui.heading("💰 Save Editor — Economy, Skills & Game Config");
-        if ui.button("⟳ Refresh Save Data").clicked() {
+    components::page_header(
+        ui,
+        "Save Editor",
+        "Edit economy, skills and game configuration for the active save.",
+    );
+    ui.add_space(8.0);
+    ui.horizontal_wrapped(|ui| {
+        if components::primary_button(ui, "Refresh Save Data").clicked() {
             app.reload_active_save_data();
             app.coaches_snapshot = read_project_coaches(app.profile_state()).ok();
             app.set_status("Refreshed active save and config values.", false);
         }
     });
-    ui.separator();
+    ui.add_space(8.0);
 
     if app.selected_save_path.is_none() {
-        ui.colored_label(
-            Color32::from_rgb(245, 176, 65),
-            "Please select an active Profile and Save slot in the top bar first.",
+        components::empty_state(
+            ui,
+            "No active save selected",
+            "Choose a profile and save slot in the top command bar to start editing.",
         );
         return;
     }
 
     ui.columns(2, |cols| {
         // Left Column: Money, XP, Level, Skills
-        cols[0].group(|ui| {
+        cols[0].card(|ui| {
             ui.heading("Player Economy & Experience");
             if let Some(data) = &app.save_data {
                 ui.label(format!(
@@ -236,7 +243,7 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
         });
 
         // Right Column: Base & Save Configs + Coaches XP
-        cols[1].group(|ui| {
+        cols[1].card(|ui| {
             ui.heading("Game & Save Configuration (`config.cfg`)");
             ui.add_space(4.0);
 

@@ -13,30 +13,30 @@ use crate::features::profile_sharing::commands::{
     inspect_shared_profile_archive, pick_shared_profile_export_directory,
     pick_shared_profile_import_archive,
 };
+use crate::gui::components::{self, UiExt};
 use crate::gui::{Ets2NativeApp, ProfileToolsSubTab};
 use crate::tauri::async_runtime;
 
 pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
-    ui.heading("🛡 Profile Tools, Sharing, Health Monitor & Save Backups");
-    ui.horizontal(|ui| {
-        for (sub, label) in [
-            (
-                ProfileToolsSubTab::CloneAndRename,
-                "📋 Clone, Rename & Copy Controls/Mods",
-            ),
-            (ProfileToolsSubTab::ProfileSharing, "📦 Export / Import Profile ZIP"),
-            (ProfileToolsSubTab::SaveHealth, "🩺 Save Health Monitor"),
-            (ProfileToolsSubTab::BackupsAndRestore, "🕰 Save Backups & Restore"),
-        ] {
-            if ui
-                .selectable_label(app.profile_tools_sub_tab == sub, label)
-                .clicked()
-            {
-                app.profile_tools_sub_tab = sub;
-            }
-        }
-    });
-    ui.separator();
+    components::page_header(
+        ui,
+        "Profiles & Backups",
+        "Clone, share and repair profiles; inspect save health and restore backups.",
+    );
+    ui.add_space(8.0);
+    if let Some(sub) = components::sub_tabs(
+        ui,
+        app.profile_tools_sub_tab,
+        &[
+            (ProfileToolsSubTab::CloneAndRename, "Clone & Rename"),
+            (ProfileToolsSubTab::ProfileSharing, "Profile Sharing"),
+            (ProfileToolsSubTab::SaveHealth, "Save Health"),
+            (ProfileToolsSubTab::BackupsAndRestore, "Backups & Restore"),
+        ],
+    ) {
+        app.profile_tools_sub_tab = sub;
+    }
+    ui.add_space(8.0);
 
     match app.profile_tools_sub_tab {
         ProfileToolsSubTab::CloneAndRename => render_clone_and_rename(app, ui),
@@ -48,7 +48,7 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
 
 fn render_clone_and_rename(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
     ui.columns(2, |cols| {
-        cols[0].group(|ui| {
+        cols[0].card(|ui| {
             ui.heading("Clone or Rename Active Profile");
             ui.horizontal(|ui| {
                 ui.label("New Profile Name:");
@@ -100,7 +100,7 @@ fn render_clone_and_rename(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             });
         });
 
-        cols[1].group(|ui| {
+        cols[1].card(|ui| {
             ui.heading("Copy Controls (`controls.sii`) or Active Mods to Another Profile");
             egui::ComboBox::from_label("Target Profile")
                 .selected_text(if app.target_profile_for_copy.is_empty() {
@@ -146,8 +146,8 @@ fn render_profile_sharing(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
     }
 
     ui.columns(2, |cols| {
-        cols[0].group(|ui| {
-            ui.heading("📤 Export Active Profile as ZIP Archive");
+        cols[0].card(|ui| {
+            ui.heading("Export Active Profile as ZIP Archive");
             ui.horizontal(|ui| {
                 ui.label("Export Folder:");
                 ui.text_edit_singleline(&mut app.share_export_dir);
@@ -180,8 +180,8 @@ fn render_profile_sharing(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             }
         });
 
-        cols[1].group(|ui| {
-            ui.heading("📥 Import Shared Profile Archive");
+        cols[1].card(|ui| {
+            ui.heading("Import Shared Profile Archive");
             ui.horizontal(|ui| {
                 ui.label("Archive (.zip):");
                 ui.text_edit_singleline(&mut app.share_import_archive);
@@ -270,7 +270,7 @@ fn render_save_health(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
     }
 
     if let Some(rep) = app.save_health_report.clone() {
-        ui.group(|ui| {
+        ui.card(|ui| {
             ui.heading(format!("Status: {} — {}", rep.status, rep.summary));
             ui.label(format!(
                 "Problems Found: {} | Auto-Fixable: {}",
@@ -371,7 +371,7 @@ fn render_backups_and_restore(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
 
     if let Some(prev) = &app.backup_preview {
         ui.separator();
-        ui.group(|ui| {
+        ui.card(|ui| {
             ui.heading(format!("Backup Restore Preview: {}", prev.backup_id));
             ui.label(format!("Reason: {} | Created: {}", prev.action_reason, prev.created_at_utc));
             for f in &prev.files {

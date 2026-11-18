@@ -8,13 +8,19 @@ use crate::features::logging::diagnostics::{export_log_file, get_log_preview};
 use crate::features::settings::ets2_paths::{
     choose_ets2_data_location, reset_ets2_data_location, set_ets2_data_location_mode,
 };
+use crate::gui::components::{self, UiExt};
 use crate::gui::Ets2NativeApp;
 use crate::tauri::async_runtime;
 
 pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
-    ui.horizontal(|ui| {
-        ui.heading("⚙ Settings, Game Paths, SQLite Datasets & Diagnostics");
-        if ui.button("⟳ Refresh Status").clicked() {
+    components::page_header(
+        ui,
+        "Settings",
+        "Game paths, local SQLite datasets, logs and diagnostics.",
+    );
+    ui.add_space(8.0);
+    ui.horizontal_wrapped(|ui| {
+        if components::primary_button(ui, "Refresh Status").clicked() {
             app.refresh_settings_and_location();
             app.log_status = get_log_status().ok();
             app.user_logs = get_user_logs(None, Some(100)).unwrap_or_default();
@@ -23,10 +29,10 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     .unwrap_or_default();
         }
     });
-    ui.separator();
+    ui.add_space(8.0);
 
     ui.columns(2, |cols| {
-        cols[0].group(|ui| {
+        cols[0].card(|ui| {
             ui.heading("ETS2 / ATS Homedir & Data Location");
             if let Some(loc) = &app.data_location {
                 ui.label(format!("Mode: {:?}", loc.mode));
@@ -146,7 +152,7 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             }
         });
 
-        cols[1].group(|ui| {
+        cols[1].card(|ui| {
             ui.heading("Application Logs & Support Bundle");
             ui.horizontal_wrapped(|ui| {
                 if ui.button("📄 Load Log Preview").clicked() {

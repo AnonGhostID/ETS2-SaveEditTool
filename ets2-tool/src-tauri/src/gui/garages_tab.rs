@@ -10,20 +10,30 @@ use crate::features::garages::models::{
     GarageOwnership, GarageRelinquishEmptyRequest, GarageResourceAssignmentRequest,
     GarageUpdateRequest,
 };
+use crate::gui::components;
 use crate::gui::Ets2NativeApp;
 use crate::tauri::async_runtime;
 
 pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
-    ui.horizontal(|ui| {
-        ui.heading("🏢 Garages & AI Driver Management");
-        if ui.button("⟳ Load Garages & Drivers").clicked() {
+    components::page_header(
+        ui,
+        "Garages & Drivers",
+        "Manage garage ownership, upgrades, headquarters and AI driver assignments.",
+    );
+    ui.add_space(8.0);
+    ui.horizontal_wrapped(|ui| {
+        if components::primary_button(ui, "Load Garages & Drivers").clicked() {
             reload_garages_and_drivers(app);
         }
     });
-    ui.separator();
+    ui.add_space(8.0);
 
     if app.garage_list.is_none() {
-        ui.label("Click 'Load Garages & Drivers' to parse garages and AI drivers from the active save.");
+        components::empty_state(
+            ui,
+            "No garage data loaded",
+            "Load garages and AI drivers to inspect and edit the active save.",
+        );
         return;
     }
 
@@ -265,7 +275,7 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
         ui.add_space(12.0);
         ui.separator();
         ui.heading(format!(
-            "👤 AI Drivers ({} Active | {} Available Pool)",
+            "AI Drivers ({} Active | {} Available Pool)",
             ai_mgmt.drivers.len(),
             ai_mgmt.available_driver_count
         ));

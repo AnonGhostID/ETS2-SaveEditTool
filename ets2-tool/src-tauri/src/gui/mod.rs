@@ -1,11 +1,13 @@
 #![allow(dead_code)]
 
 pub mod career_tab;
+pub mod components;
 pub mod garages_tab;
 pub mod mods_tab;
 pub mod profile_tools_tab;
 pub mod save_editor_tab;
 pub mod settings_tab;
+pub mod theme;
 pub mod vehicles_tab;
 
 use std::collections::VecDeque;
@@ -415,13 +417,7 @@ impl Ets2NativeApp {
     }
 
     fn configure_theme(ctx: &egui::Context) {
-        let mut visuals = egui::Visuals::dark();
-        visuals.panel_fill = Color32::from_rgb(17, 20, 26);
-        visuals.window_fill = Color32::from_rgb(22, 26, 34);
-        visuals.extreme_bg_color = Color32::from_rgb(12, 14, 18);
-        visuals.selection.bg_fill = Color32::from_rgb(214, 142, 28);
-        visuals.selection.stroke = egui::Stroke::new(1.0_f32, Color32::from_rgb(255, 210, 120));
-        ctx.set_visuals(visuals);
+        theme::apply(ctx);
     }
 
     pub fn set_status(&mut self, message: impl Into<String>, is_error: bool) {
@@ -676,18 +672,42 @@ impl Ets2NativeApp {
 
     fn render_top_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            ui.heading(
-                RichText::new("ETS2 / ATS Save-Edit Tool")
-                    .color(Color32::from_rgb(245, 176, 65))
-                    .strong(),
+            let (badge, _) =
+                ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::hover());
+            ui.painter()
+                .rect_filled(badge, egui::Rounding::same(8.0), theme::ACCENT);
+            ui.painter().text(
+                badge.center(),
+                egui::Align2::CENTER_CENTER,
+                "E2",
+                egui::FontId::proportional(13.0),
+                theme::ON_ACCENT,
             );
-            ui.label(
-                RichText::new(format!("v{} (Native GUI)", env!("CARGO_PKG_VERSION"))).weak(),
-            );
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                ui.label(
+                    RichText::new("SAVE-EDIT TOOL")
+                        .size(13.0)
+                        .strong()
+                        .color(theme::TEXT),
+                );
+                ui.label(
+                    RichText::new("ETS2 / ATS · NATIVE")
+                        .size(9.0)
+                        .color(theme::FAINT),
+                );
+            });
+            ui.add_space(4.0);
             ui.separator();
+            ui.add_space(4.0);
 
             // Game Selector
-            ui.label("Game:");
+            ui.label(
+                RichText::new("GAME")
+                    .size(9.5)
+                    .strong()
+                    .color(theme::FAINT),
+            );
             let mut game_changed = false;
             egui::ComboBox::from_id_salt("game_selector")
                 .selected_text(self.selected_game.to_uppercase())
@@ -713,7 +733,12 @@ impl Ets2NativeApp {
             }
 
             // Profile Selector
-            ui.label("Profile:");
+            ui.label(
+                RichText::new("PROFILE")
+                    .size(9.5)
+                    .strong()
+                    .color(theme::FAINT),
+            );
             let current_profile_label = self
                 .selected_profile_path
                 .as_ref()
@@ -729,7 +754,7 @@ impl Ets2NativeApp {
             let mut newly_selected_profile = None;
             egui::ComboBox::from_id_salt("profile_selector")
                 .selected_text(current_profile_label)
-                .width(190.0)
+                .width(155.0)
                 .show_ui(ui, |ui| {
                     for profile in &self.profiles {
                         let label = profile
@@ -748,7 +773,12 @@ impl Ets2NativeApp {
             }
 
             // Save Selector
-            ui.label("Save:");
+            ui.label(
+                RichText::new("SAVE")
+                    .size(9.5)
+                    .strong()
+                    .color(theme::FAINT),
+            );
             let current_save_label = self
                 .selected_save_path
                 .as_ref()
@@ -767,7 +797,7 @@ impl Ets2NativeApp {
             let mut newly_selected_save = None;
             egui::ComboBox::from_id_salt("save_selector")
                 .selected_text(current_save_label)
-                .width(180.0)
+                .width(155.0)
                 .show_ui(ui, |ui| {
                     for save in &self.saves {
                         let label = format!(
@@ -823,7 +853,12 @@ impl Ets2NativeApp {
             // Language Selector
             if !self.available_languages.is_empty() {
                 ui.separator();
-                ui.label("Lang:");
+                ui.label(
+                    RichText::new("LANG")
+                        .size(9.5)
+                        .strong()
+                        .color(theme::FAINT),
+                );
                 let mut next_lang = None;
                 egui::ComboBox::from_id_salt("lang_selector")
                     .selected_text(self.current_language.to_uppercase())
@@ -847,87 +882,249 @@ impl Ets2NativeApp {
                 }
             }
         });
+    }
 
-        ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
-            let tabs = [
-                (WorkspaceTab::Launcher, "🏠 Workspace Hub"),
-                (WorkspaceTab::SaveEditor, "💰 Save Editor"),
-                (WorkspaceTab::Vehicles, "🚛 Vehicles & Powertrain"),
-                (WorkspaceTab::Garages, "🏢 Garages & AI Drivers"),
-                (WorkspaceTab::Career, "📊 Career, Telemetry & VTC"),
-                (WorkspaceTab::Mods, "🧩 Mods & Conflict Analyzer"),
-                (WorkspaceTab::ProfileTools, "🛡 Profile Tools & Backups"),
-                (WorkspaceTab::Settings, "⚙ Settings & Diagnostics"),
-            ];
-            for (tab, label) in tabs {
-                let selected = self.active_tab == tab;
-                if ui.selectable_label(selected, RichText::new(label).strong()).clicked() {
-                    self.active_tab = tab;
-                }
+    fn render_sidebar(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(6.0);
+
+        components::nav_section(ui, "WORKSPACE");
+        for (tab, label) in [
+            (WorkspaceTab::Launcher, "Dashboard"),
+            (WorkspaceTab::SaveEditor, "Save Editor"),
+            (WorkspaceTab::Vehicles, "Vehicles & Fleet"),
+            (WorkspaceTab::Garages, "Garages & Drivers"),
+        ] {
+            if components::nav_item(ui, label, self.active_tab == tab).clicked() {
+                self.active_tab = tab;
             }
-        });
+        }
+
+        components::nav_section(ui, "CAREER");
+        if components::nav_item(ui, "Career & Dispatch", self.active_tab == WorkspaceTab::Career)
+            .clicked()
+        {
+            self.active_tab = WorkspaceTab::Career;
+        }
+
+        components::nav_section(ui, "TOOLS");
+        for (tab, label) in [
+            (WorkspaceTab::Mods, "Mods & Conflicts"),
+            (WorkspaceTab::ProfileTools, "Profiles & Backups"),
+            (WorkspaceTab::Settings, "Settings"),
+        ] {
+            if components::nav_item(ui, label, self.active_tab == tab).clicked() {
+                self.active_tab = tab;
+            }
+        }
+
+        let remaining = (ui.available_height() - 46.0).max(8.0);
+        ui.add_space(remaining);
+        ui.separator();
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(format!("v{} · Native", env!("CARGO_PKG_VERSION")))
+                .size(10.0)
+                .color(theme::FAINT),
+        );
     }
 
     fn render_launcher_tab(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Select a Workspace");
-        ui.label("Native cross-platform desktop interface for Euro Truck Simulator 2 and American Truck Simulator (Zero WebView).");
-        ui.add_space(12.0);
-
-        ui.columns(2, |cols| {
-            cols[0].group(|ui| {
-                ui.heading(RichText::new("🛠 Save Editor & Fleet Workspace").color(Color32::from_rgb(245, 176, 65)));
-                ui.label("Decrypt SII saves, edit player money, XP, level, skills, base/save configs, repair/refuel trucks & trailers, swap active vehicles, and manage garages & AI drivers.");
-                ui.add_space(8.0);
-                if let Some(data) = &self.save_data {
-                    ui.label(format!("• Active Balance: €{}", data.money.unwrap_or(0)));
-                    ui.label(format!("• Experience: {} XP", data.xp.unwrap_or(0)));
-                    ui.label(format!("• Visited Cities: {}", data.visited_cities.unwrap_or(0)));
-                } else {
-                    ui.label("• Select a profile and save slot in the top bar to begin editing.");
-                }
-                if let Some(truck) = &self.current_truck_summary {
-                    ui.label(format!(
-                        "• Current Truck: {} ({} km)",
-                        truck.display_name.as_deref().unwrap_or("Unknown"),
-                        truck.odometer_km.unwrap_or(0)
-                    ));
-                }
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Open Save Editor →").clicked() {
-                        self.active_tab = WorkspaceTab::SaveEditor;
-                    }
-                    if ui.button("Open Vehicles →").clicked() {
-                        self.active_tab = WorkspaceTab::Vehicles;
-                    }
-                    if ui.button("Open Garages →").clicked() {
-                        self.active_tab = WorkspaceTab::Garages;
-                    }
-                });
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                components::page_header(
+                    ui,
+                    "Dashboard",
+                    "A live overview of your active profile, save and fleet.",
+                );
             });
-
-            cols[1].group(|ui| {
-                ui.heading(RichText::new("📡 Career, Freight Dispatcher & VTC").color(Color32::from_rgb(88, 214, 141)));
-                ui.label("Monitor live SCS shared-memory telemetry, generate and inject freight market jobs directly into your quicksave, track logbook trips, and manage your virtual company.");
-                ui.add_space(8.0);
-                if ui.button("Open Career & Dispatcher →").clicked() {
-                    self.active_tab = WorkspaceTab::Career;
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if components::primary_button(ui, "Reload Session").clicked() {
+                    self.refresh_profiles_and_saves();
+                    self.set_status("Profiles and active save reloaded.", false);
                 }
-                ui.add_space(8.0);
-                ui.separator();
-                ui.heading("🧩 Mod & Profile Safety Suite");
-                ui.label("Scan local & Steam Workshop mods, manage mod presets/sandboxes, analyze crash/conflict logs, clone/share profiles, and restore automatic save backups.");
-                ui.horizontal(|ui| {
-                    if ui.button("Open Mod Manager →").clicked() {
-                        self.active_tab = WorkspaceTab::Mods;
-                    }
-                    if ui.button("Open Profile & Backup Tools →").clicked() {
-                        self.active_tab = WorkspaceTab::ProfileTools;
-                    }
-                });
             });
         });
+        ui.add_space(16.0);
+
+        let profile_label = self
+            .selected_profile_path
+            .as_ref()
+            .and_then(|path| {
+                self.profiles
+                    .iter()
+                    .find(|p| &p.path == path)
+                    .and_then(|p| p.name.clone())
+                    .or_else(|| Some(path.clone()))
+            })
+            .unwrap_or_else(|| "No profile selected".to_string());
+        let save_label = self
+            .selected_save_path
+            .as_ref()
+            .and_then(|path| {
+                self.saves
+                    .iter()
+                    .find(|s| &s.path == path)
+                    .map(|s| s.name.clone().unwrap_or_else(|| s.folder.clone()))
+            })
+            .unwrap_or_else(|| "No save selected".to_string());
+
+        egui::Frame::none()
+            .fill(theme::SURFACE)
+            .stroke(egui::Stroke::new(1.0, theme::BORDER))
+            .rounding(egui::Rounding::same(10.0))
+            .inner_margin(egui::Margin::symmetric(16.0, 14.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    components::game_badge(ui, &self.selected_game);
+                    ui.add_space(4.0);
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        ui.label(
+                            RichText::new(profile_label.clone())
+                                .size(14.0)
+                                .strong()
+                                .color(theme::TEXT),
+                        );
+                        ui.label(
+                            RichText::new(format!("Save slot · {save_label}"))
+                                .size(11.5)
+                                .color(theme::MUTED),
+                        );
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            RichText::new(format!(
+                                "{} profiles · {} saves",
+                                self.profiles.len(),
+                                self.saves.len()
+                            ))
+                            .size(11.0)
+                            .color(theme::FAINT),
+                        );
+                    });
+                });
+            });
+
+        ui.add_space(12.0);
+
+        let money = self.save_data.as_ref().and_then(|d| d.money).unwrap_or(0);
+        let xp = self.save_data.as_ref().and_then(|d| d.xp).unwrap_or(0);
+        let cities = self
+            .save_data
+            .as_ref()
+            .and_then(|d| d.visited_cities)
+            .unwrap_or(0);
+        ui.columns(4, |cols| {
+            components::stat_tile(
+                &mut cols[0],
+                "BALANCE",
+                &format!("€{money}"),
+                theme::ACCENT,
+            );
+            components::stat_tile(
+                &mut cols[1],
+                "EXPERIENCE",
+                &format!("{xp} XP"),
+                theme::TEXT,
+            );
+            components::stat_tile(
+                &mut cols[2],
+                "LEVEL",
+                &format!("{}", self.edit_level_input),
+                theme::SUCCESS,
+            );
+            components::stat_tile(
+                &mut cols[3],
+                "VISITED CITIES",
+                &format!("{cities}"),
+                theme::TEXT,
+            );
+        });
+
+        if let Some(truck) = &self.current_truck_summary {
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(format!(
+                    "Current truck · {} · {} km",
+                    truck.display_name.as_deref().unwrap_or("Unknown"),
+                    truck.odometer_km.unwrap_or(0)
+                ))
+                .size(11.5)
+                .color(theme::MUTED),
+            );
+        }
+
+        ui.add_space(18.0);
+        components::section_label(ui, "QUICK ACTIONS");
+        ui.add_space(8.0);
+
+        ui.columns(2, |cols| {
+            if components::action_card(
+                &mut cols[0],
+                "Save Editor",
+                "Money, XP, skills and game configuration for the active save.",
+                "Open editor",
+            ) {
+                self.active_tab = WorkspaceTab::SaveEditor;
+            }
+            if components::action_card(
+                &mut cols[1],
+                "Vehicles & Fleet",
+                "Repair, plates, active truck or trailer and powertrain swaps.",
+                "Open vehicles",
+            ) {
+                self.active_tab = WorkspaceTab::Vehicles;
+            }
+        });
+
+        ui.add_space(8.0);
+        ui.columns(2, |cols| {
+            if components::action_card(
+                &mut cols[0],
+                "Garages & Drivers",
+                "Ownership, upgrades, headquarters and AI driver assignments.",
+                "Open garages",
+            ) {
+                self.active_tab = WorkspaceTab::Garages;
+            }
+            if components::action_card(
+                &mut cols[1],
+                "Career & Dispatcher",
+                "Live telemetry, freight market jobs, logbook analytics and VTC.",
+                "Open career",
+            ) {
+                self.active_tab = WorkspaceTab::Career;
+            }
+        });
+
+        ui.add_space(8.0);
+        ui.columns(2, |cols| {
+            if components::action_card(
+                &mut cols[0],
+                "Mods & Conflicts",
+                "Installed mods, presets, sandboxes and crash diagnostics.",
+                "Open mods",
+            ) {
+                self.active_tab = WorkspaceTab::Mods;
+            }
+            if components::action_card(
+                &mut cols[1],
+                "Profiles & Backups",
+                "Clone, share, heal or restore profiles and save backups.",
+                "Open tools",
+            ) {
+                self.active_tab = WorkspaceTab::ProfileTools;
+            }
+        });
+
+        ui.add_space(14.0);
+        ui.label(
+            RichText::new(
+                "Every write creates a restorable backup. Undo is available in the command bar.",
+            )
+            .size(11.0)
+            .color(theme::FAINT),
+        );
     }
 }
 
@@ -935,39 +1132,77 @@ impl eframe::App for Ets2NativeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_background_events();
 
-        egui::TopBottomPanel::top("native_top_bar").show(ctx, |ui| {
-            self.render_top_bar(ui);
-        });
+        egui::TopBottomPanel::top("native_top_bar")
+            .frame(
+                egui::Frame::none()
+                    .fill(theme::SIDEBAR)
+                    .inner_margin(egui::Margin::symmetric(18.0, 7.0))
+                    .stroke(egui::Stroke::new(1.0, theme::BORDER)),
+            )
+            .show(ctx, |ui| {
+                self.render_top_bar(ui);
+            });
 
         if let Some((msg, is_error)) = self.status_banner.clone() {
-            egui::TopBottomPanel::bottom("native_status_bar").show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let color = if is_error {
-                        Color32::from_rgb(231, 76, 60)
-                    } else {
-                        Color32::from_rgb(88, 214, 141)
-                    };
-                    ui.colored_label(color, RichText::new(&msg).strong());
-                    if ui.small_button("✖").clicked() {
-                        self.status_banner = None;
-                    }
+            egui::TopBottomPanel::bottom("native_status_bar")
+                .frame(
+                    egui::Frame::none()
+                        .fill(theme::SURFACE)
+                        .inner_margin(egui::Margin::symmetric(18.0, 7.0))
+                        .stroke(egui::Stroke::new(1.0, theme::BORDER)),
+                )
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        let color = if is_error {
+                            theme::DANGER
+                        } else {
+                            theme::SUCCESS
+                        };
+                        components::status_dot(ui, color);
+                        ui.label(RichText::new(&msg).size(12.0).color(theme::TEXT));
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                if ui.small_button("Dismiss").clicked() {
+                                    self.status_banner = None;
+                                }
+                            },
+                        );
+                    });
                 });
-            });
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| match self.active_tab {
-                    WorkspaceTab::Launcher => self.render_launcher_tab(ui),
-                    WorkspaceTab::SaveEditor => save_editor_tab::render(self, ui),
-                    WorkspaceTab::Vehicles => vehicles_tab::render(self, ui),
-                    WorkspaceTab::Garages => garages_tab::render(self, ui),
-                    WorkspaceTab::Career => career_tab::render(self, ui, ctx),
-                    WorkspaceTab::Mods => mods_tab::render(self, ui),
-                    WorkspaceTab::ProfileTools => profile_tools_tab::render(self, ui),
-                    WorkspaceTab::Settings => settings_tab::render(self, ui),
-                });
-        });
+        egui::SidePanel::left("native_sidebar")
+            .resizable(false)
+            .exact_width(214.0)
+            .frame(
+                egui::Frame::none()
+                    .fill(theme::SIDEBAR)
+                    .inner_margin(egui::Margin::symmetric(12.0, 8.0)),
+            )
+            .show(ctx, |ui| {
+                self.render_sidebar(ui);
+            });
+
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::none()
+                    .fill(theme::BG)
+                    .inner_margin(egui::Margin::symmetric(24.0, 18.0)),
+            )
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| match self.active_tab {
+                        WorkspaceTab::Launcher => self.render_launcher_tab(ui),
+                        WorkspaceTab::SaveEditor => save_editor_tab::render(self, ui),
+                        WorkspaceTab::Vehicles => vehicles_tab::render(self, ui),
+                        WorkspaceTab::Garages => garages_tab::render(self, ui),
+                        WorkspaceTab::Career => career_tab::render(self, ui, ctx),
+                        WorkspaceTab::Mods => mods_tab::render(self, ui),
+                        WorkspaceTab::ProfileTools => profile_tools_tab::render(self, ui),
+                        WorkspaceTab::Settings => settings_tab::render(self, ui),
+                    });
+            });
     }
 }

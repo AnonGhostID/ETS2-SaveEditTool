@@ -149,7 +149,7 @@ fn main() {
 
     let native_options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_title("Save-Edit Tool (Native)")
+            .with_title("ETS2 / ATS Save-Edit Tool")
             .with_inner_size([1280.0, 820.0])
             .with_min_inner_size([960.0, 640.0]),
         ..Default::default()

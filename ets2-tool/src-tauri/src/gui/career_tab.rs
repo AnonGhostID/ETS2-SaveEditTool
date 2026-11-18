@@ -17,6 +17,7 @@ use crate::features::vtc::commands::{
     create_company, get_company_members, get_company_overview, get_current_user_profile,
 };
 use crate::features::vtc::models::CreateCompanyInput;
+use crate::gui::components::{self, UiExt};
 use crate::gui::{CareerSubTab, Ets2NativeApp};
 use crate::tauri::async_runtime;
 
@@ -24,32 +25,34 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui, ctx: &egui::Context) {
     // Request periodic repaint on Career tab for live telemetry updates
     ctx.request_repaint_after(Duration::from_millis(500));
 
-    ui.horizontal(|ui| {
-        ui.heading("📊 Career, Live Telemetry, Freight Dispatcher & VTC");
-        if ui.button("⟳ Refresh Career & Dispatcher").clicked() {
+    components::page_header(
+        ui,
+        "Career & Dispatcher",
+        "Live telemetry, freight jobs, logbook analytics and your virtual company.",
+    );
+    ui.add_space(8.0);
+    if let Some(sub) = components::sub_tabs(
+        ui,
+        app.career_sub_tab,
+        &[
+            (CareerSubTab::LiveTelemetry, "Live Telemetry"),
+            (CareerSubTab::Dispatcher, "Freight Market"),
+            (CareerSubTab::LogbookAndAnalytics, "Logbook & Analytics"),
+            (CareerSubTab::VtcAndAccount, "VTC & Account"),
+        ],
+    ) {
+        app.career_sub_tab = sub;
+        if app.career_overview.is_none() {
+            refresh_career_data(app);
+        }
+    }
+    ui.add_space(4.0);
+    ui.horizontal_wrapped(|ui| {
+        if components::primary_button(ui, "Refresh Career & Dispatcher").clicked() {
             refresh_career_data(app);
         }
     });
-
-    ui.horizontal(|ui| {
-        for (sub, label) in [
-            (CareerSubTab::LiveTelemetry, "📡 Live Telemetry & Overview"),
-            (CareerSubTab::Dispatcher, "📦 Freight Market & Quicksave Injector"),
-            (CareerSubTab::LogbookAndAnalytics, "📓 Trip Logbook & Analytics"),
-            (CareerSubTab::VtcAndAccount, "🏢 VTC Company & Account"),
-        ] {
-            if ui
-                .selectable_label(app.career_sub_tab == sub, label)
-                .clicked()
-            {
-                app.career_sub_tab = sub;
-                if app.career_overview.is_none() {
-                    refresh_career_data(app);
-                }
-            }
-        }
-    });
-    ui.separator();
+    ui.add_space(8.0);
 
     match app.career_sub_tab {
         CareerSubTab::LiveTelemetry => render_live_telemetry(app, ui),
@@ -91,7 +94,7 @@ fn render_live_telemetry(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
         .and_then(|g| g.clone());
 
     ui.columns(2, |cols| {
-        cols[0].group(|ui| {
+        cols[0].card(|ui| {
             ui.heading("SCS Telemetry Bridge Status");
             if let Some(st) = status {
                 ui.label(format!(
@@ -126,7 +129,7 @@ fn render_live_telemetry(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             }
         });
 
-        cols[1].group(|ui| {
+        cols[1].card(|ui| {
             ui.heading("Company Economy & Bank Overview");
             if let Some(ov) = &app.career_overview {
                 ui.label(format!(
@@ -335,7 +338,7 @@ fn render_logbook_and_analytics(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
     });
 
     if let Some(sum) = &app.analytics_summary {
-        ui.group(|ui| {
+        ui.card(|ui| {
             ui.heading("Analytics Summary");
             ui.label(format!(
                 "Total Jobs: {} | Revenue: €{} | Costs: €{} | Net Profit: €{} | Distance: {:.1} km",
@@ -381,7 +384,7 @@ fn render_logbook_and_analytics(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
 
 fn render_vtc_and_account(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
     ui.columns(2, |cols| {
-        cols[0].group(|ui| {
+        cols[0].card(|ui| {
             ui.heading("Local Account & Session");
             if let Some(profile) = &app.vtc_user_profile {
                 ui.label(format!(
@@ -423,7 +426,7 @@ fn render_vtc_and_account(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             }
         });
 
-        cols[1].group(|ui| {
+        cols[1].card(|ui| {
             ui.heading("Virtual Trucking Company (VTC)");
             if let Some(comp) = &app.vtc_company {
                 ui.label(format!(

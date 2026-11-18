@@ -13,35 +13,38 @@ use crate::features::vehicles::editor::{
     set_player_trailer_cargo_mass, set_player_trailer_license_plate, set_player_truck_fuel,
     set_player_truck_license_plate, set_player_truck_wear,
 };
+use crate::gui::components::{self, UiExt};
 use crate::gui::{Ets2NativeApp, VehiclesSubTab};
 use crate::tauri::async_runtime;
 
 pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
-    ui.horizontal(|ui| {
-        ui.heading("🚛 Vehicles — Player Truck & Trailer, Switcher & Powertrain");
-        if ui.button("⟳ Reload Vehicles").clicked() {
+    components::page_header(
+        ui,
+        "Vehicles & Fleet",
+        "Maintain the active truck and trailer, switch vehicles or swap the powertrain.",
+    );
+    ui.add_space(8.0);
+    ui.horizontal_wrapped(|ui| {
+        if components::primary_button(ui, "Reload Vehicles").clicked() {
             app.reload_active_save_data();
             app.set_status("Reloaded player and fleet vehicles.", false);
         }
     });
-
-    ui.horizontal(|ui| {
-        for (sub, label) in [
-            (VehiclesSubTab::PlayerVehicleEditor, "🔧 Active Truck & Trailer Editor"),
-            (VehiclesSubTab::TruckSwitcher, "🔄 Active Truck Switcher"),
-            (VehiclesSubTab::TrailerSwitcher, "🔄 Active Trailer Switcher"),
-            (VehiclesSubTab::PowertrainSwapper, "⚙ Engine & Transmission Catalog"),
-            (VehiclesSubTab::FleetInventory, "📋 Full Fleet Inventory"),
-        ] {
-            if ui
-                .selectable_label(app.vehicles_sub_tab == sub, label)
-                .clicked()
-            {
-                app.vehicles_sub_tab = sub;
-            }
-        }
-    });
-    ui.separator();
+    ui.add_space(4.0);
+    if let Some(sub) = components::sub_tabs(
+        ui,
+        app.vehicles_sub_tab,
+        &[
+            (VehiclesSubTab::PlayerVehicleEditor, "Truck & Trailer"),
+            (VehiclesSubTab::TruckSwitcher, "Truck Switcher"),
+            (VehiclesSubTab::TrailerSwitcher, "Trailer Switcher"),
+            (VehiclesSubTab::PowertrainSwapper, "Powertrain"),
+            (VehiclesSubTab::FleetInventory, "Fleet Inventory"),
+        ],
+    ) {
+        app.vehicles_sub_tab = sub;
+    }
+    ui.add_space(8.0);
 
     match app.vehicles_sub_tab {
         VehiclesSubTab::PlayerVehicleEditor => render_player_editor(app, ui),
@@ -55,7 +58,7 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
 fn render_player_editor(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
     ui.columns(2, |cols| {
         // Player Truck
-        cols[0].group(|ui| {
+        cols[0].card(|ui| {
             ui.heading("Player Truck Maintenance & Customization");
             if let Some(truck) = &app.player_truck {
                 ui.label(format!(
@@ -186,7 +189,7 @@ fn render_player_editor(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
         });
 
         // Player Trailer
-        cols[1].group(|ui| {
+        cols[1].card(|ui| {
             ui.heading("Player Trailer Maintenance & Cargo");
             if let Some(res) = &app.player_trailer_result {
                 ui.label(&res.message);
