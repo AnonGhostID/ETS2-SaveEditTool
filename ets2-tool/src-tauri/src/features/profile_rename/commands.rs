@@ -5,12 +5,9 @@ use crate::shared::hex_float::text_to_hex;
 use crate::state::AppProfileState;
 use std::fs;
 use std::path::Path;
-use tauri::command;
-
-#[command]
 pub fn profile_rename(
     new_name: String,
-    profile_state: tauri::State<'_, AppProfileState>,
+    profile_state: crate::tauri::State<'_, AppProfileState>,
 ) -> Result<String, String> {
     // 1. Get current profile path
     let profile_path_str = require_current_profile(profile_state.clone())?;

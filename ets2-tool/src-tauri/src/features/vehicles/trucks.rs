@@ -5,8 +5,6 @@ use crate::shared::paths::game_sii_from_save;
 use crate::shared::sii_parser::{get_player_id, get_vehicle_ids, parse_trucks_from_sii};
 use crate::shared::trace::TraceScope;
 use crate::state::{AppProfileState, DecryptCache, ProfileCache};
-use tauri::command;
-
 fn player_truck_from_content(content: &str, trucks: &[ParsedTruck]) -> Option<ParsedTruck> {
     let player_id = get_player_id(content)?;
     let (player_truck_id_opt, _) = get_vehicle_ids(content, &player_id);
@@ -17,13 +15,11 @@ fn player_truck_from_content(content: &str, trucks: &[ParsedTruck]) -> Option<Pa
         .find(|truck| truck.truck_id.to_lowercase() == id_clean)
         .cloned()
 }
-
-#[command]
 pub async fn get_all_trucks(
     profile_path: String,
-    profile_state: tauri::State<'_, AppProfileState>,
-    profile_cache: tauri::State<'_, ProfileCache>,
-    decrypt_cache: tauri::State<'_, DecryptCache>,
+    profile_state: crate::tauri::State<'_, AppProfileState>,
+    profile_cache: crate::tauri::State<'_, ProfileCache>,
+    decrypt_cache: crate::tauri::State<'_, DecryptCache>,
 ) -> Result<Vec<ParsedTruck>, String> {
     let mut trace = TraceScope::new("get_all_trucks");
     dev_log!("get_all_trucks: Profil {}", profile_path);
@@ -43,7 +39,7 @@ pub async fn get_all_trucks(
     }
 
     let decrypt_cache_cloned = decrypt_cache.inner().clone();
-    let (trucks, player_truck) = tauri::async_runtime::spawn_blocking(move || {
+    let (trucks, player_truck) = crate::tauri::async_runtime::spawn_blocking(move || {
         let (content, _) = load_save_content_from_save_path(&save_path, &decrypt_cache_cloned)?;
         let trucks = parse_trucks_from_sii(&content);
         let player_truck = player_truck_from_content(&content, &trucks);
@@ -57,13 +53,11 @@ pub async fn get_all_trucks(
     trace.finish_ok();
     Ok(trucks)
 }
-
-#[command]
 pub async fn get_player_truck(
     profile_path: String,
-    profile_state: tauri::State<'_, AppProfileState>,
-    profile_cache: tauri::State<'_, ProfileCache>,
-    decrypt_cache: tauri::State<'_, DecryptCache>,
+    profile_state: crate::tauri::State<'_, AppProfileState>,
+    profile_cache: crate::tauri::State<'_, ProfileCache>,
+    decrypt_cache: crate::tauri::State<'_, DecryptCache>,
 ) -> Result<ParsedTruck, String> {
     let mut trace = TraceScope::new("get_player_truck");
     dev_log!("get_player_truck: Profil {}", profile_path);
@@ -83,7 +77,7 @@ pub async fn get_player_truck(
     }
 
     let decrypt_cache_cloned = decrypt_cache.inner().clone();
-    let (trucks, base_truck) = tauri::async_runtime::spawn_blocking(move || {
+    let (trucks, base_truck) = crate::tauri::async_runtime::spawn_blocking(move || {
         let (content, _) = load_save_content_from_save_path(&save_path, &decrypt_cache_cloned)?;
         let trucks = parse_trucks_from_sii(&content);
         let player_id = get_player_id(&content)

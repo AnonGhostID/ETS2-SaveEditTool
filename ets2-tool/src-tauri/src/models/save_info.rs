@@ -1,7 +1,7 @@
 use crate::models::profile_info::SaveKind;
 use serde::Serialize;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SaveInfo {
     pub path: String,
     pub folder: String,

@@ -1,7 +1,5 @@
 use rusqlite::Connection;
-use tauri::State;
-use tauri::command;
-
+use crate::tauri::State;
 use crate::features::auth::db as auth_db;
 use crate::features::auth::service as auth_service;
 use crate::features::companies::db;
@@ -9,8 +7,6 @@ use crate::features::companies::models::{Company, CompanyListItem};
 use crate::features::companies::service;
 use crate::state::AuthState;
 use base64::Engine;
-
-#[command]
 pub fn company_list(limit: Option<i64>) -> Result<Vec<CompanyListItem>, String> {
     let db_path = auth_db::default_db_path();
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
@@ -20,8 +16,6 @@ pub fn company_list(limit: Option<i64>) -> Result<Vec<CompanyListItem>, String> 
 
     service::list_companies(&conn, limit.unwrap_or(50))
 }
-
-#[command]
 pub fn company_create(
     name: String,
     logo_path: Option<String>,
@@ -48,8 +42,6 @@ pub fn company_create(
         job_type,
     )
 }
-
-#[command]
 pub fn company_create_onboarding(
     name: String,
     location: String,
@@ -114,8 +106,6 @@ pub fn company_create_onboarding(
         header_mime,
     )
 }
-
-#[command]
 pub fn company_join(company_id: i64, auth: State<'_, AuthState>) -> Result<Company, String> {
     let db_path = auth_db::default_db_path();
     let mut conn = Connection::open(db_path).map_err(|e| e.to_string())?;
@@ -125,8 +115,6 @@ pub fn company_join(company_id: i64, auth: State<'_, AuthState>) -> Result<Compa
 
     service::join_company(&mut conn, auth.inner(), company_id)
 }
-
-#[command]
 pub fn company_get_current(auth: State<'_, AuthState>) -> Result<Option<Company>, String> {
     let db_path = auth_db::default_db_path();
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
@@ -136,8 +124,6 @@ pub fn company_get_current(auth: State<'_, AuthState>) -> Result<Option<Company>
 
     service::get_current_company(&conn, auth.inner())
 }
-
-#[command]
 pub fn company_get_for_user(
     user_id: i64,
     auth: State<'_, AuthState>,

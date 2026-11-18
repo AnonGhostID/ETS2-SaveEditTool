@@ -13,13 +13,9 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::State;
-use tauri::command;
-
+use crate::tauri::State;
 type CommandResult<T> = Result<T, CommandFailure>;
 const UNDO_SNAPSHOT_LABEL: &str = "Before last edit";
-
-#[command]
 pub fn read_project_coaches(
     profile_state: State<'_, AppProfileState>,
 ) -> Result<super::coaches::CoachesSnapshot, String> {
@@ -31,8 +27,6 @@ pub fn read_project_coaches(
     snapshot.save_hash = career_save_hash(&path, &content);
     Ok(snapshot)
 }
-
-#[command]
 pub fn edit_career_xp(
     xp: i64,
     career: super::coaches::Career,
@@ -248,7 +242,7 @@ fn verify_contains(path: &Path, expected_fragment: &str, user_message: &str) -> 
     Ok(())
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UndoStatusDto {
     pub can_undo: bool,
@@ -256,7 +250,7 @@ pub struct UndoStatusDto {
     pub last_undo_timestamp: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplyCustomResetValuesResultDto {
     pub undo_backup_id: String,
@@ -471,8 +465,6 @@ fn invalidate_custom_reset_caches(
     profile_cache.invalidate_save_data();
     profile_cache.invalidate_vehicle_data();
 }
-
-#[command]
 pub fn get_undo_status(profile_state: State<'_, AppProfileState>) -> Result<UndoStatusDto, String> {
     let mut trace = TraceScope::new("get_undo_status");
     let has_selected_save = profile_state
@@ -507,8 +499,6 @@ pub fn get_undo_status(profile_state: State<'_, AppProfileState>) -> Result<Undo
         last_undo_timestamp: latest.as_ref().map(|item| item.created_at_utc.clone()),
     })
 }
-
-#[command]
 pub fn apply_custom_reset_values(
     level: Option<u32>,
     xp: Option<u64>,
@@ -648,8 +638,6 @@ pub fn apply_custom_reset_values(
         applied_xp: values.xp,
     })
 }
-
-#[command]
 pub fn undo_last_save_change(
     profile_state: State<'_, AppProfileState>,
     profile_cache: State<'_, ProfileCache>,
@@ -736,8 +724,6 @@ pub fn undo_last_save_change(
 
     Ok(execution.result)
 }
-
-#[command]
 pub fn edit_money(
     amount: i64,
     profile_state: State<'_, AppProfileState>,
@@ -776,8 +762,6 @@ pub fn edit_money(
     dev_log!("Geld geändert: {}", amount);
     Ok(())
 }
-
-#[command]
 pub fn edit_xp(
     xp: i64,
     profile_state: State<'_, AppProfileState>,
@@ -793,8 +777,6 @@ pub fn edit_xp(
         decrypt_cache.inner(),
     )
 }
-
-#[command]
 pub fn edit_level(
     xp: i64,
     profile_state: State<'_, AppProfileState>,
@@ -813,10 +795,8 @@ pub fn edit_level(
 
 #[derive(Deserialize)]
 pub struct EditValuePayload {
-    value: String,
+    pub value: String,
 }
-
-#[command]
 pub fn edit_player_money(
     value: i64,
     profile_state: State<'_, AppProfileState>,
@@ -855,8 +835,6 @@ pub fn edit_player_money(
 
     Ok(())
 }
-
-#[command]
 pub fn edit_player_experience(
     value: i64,
     profile_state: State<'_, AppProfileState>,
@@ -872,8 +850,6 @@ pub fn edit_player_experience(
         decrypt_cache.inner(),
     )
 }
-
-#[command]
 pub fn edit_skill_value(
     skill: String,
     value: i64,
@@ -916,8 +892,6 @@ pub fn edit_skill_value(
 
     Ok(())
 }
-
-#[command]
 pub fn edit_developer_value(
     value: i64,
     profile_state: State<'_, AppProfileState>,
@@ -962,8 +936,6 @@ pub fn edit_developer_value(
     dev_log!("Dev erfolgreich geändert auf {}", value);
     Ok(())
 }
-
-#[command]
 pub fn edit_console_value(
     value: i64,
     profile_state: State<'_, AppProfileState>,
@@ -1008,8 +980,6 @@ pub fn edit_console_value(
     dev_log!("Dev erfolgreich geändert auf {}", value);
     Ok(())
 }
-
-#[command]
 pub fn edit_convoy_value(
     value: i64,
     profile_state: State<'_, AppProfileState>,
@@ -1054,8 +1024,6 @@ pub fn edit_convoy_value(
     dev_log!("Convoy erfolgreich geändert auf {}", value);
     Ok(())
 }
-
-#[command]
 pub fn edit_traffic_value(
     value: i64,
     profile_state: State<'_, AppProfileState>,
@@ -1095,8 +1063,6 @@ pub fn edit_traffic_value(
     dev_log!("Traffic erfolgreich geändert auf {}", value);
     Ok(())
 }
-
-#[command]
 pub fn edit_parking_doubles_value(
     value: i64,
     profile_state: State<'_, AppProfileState>,
@@ -1150,11 +1116,9 @@ pub fn edit_parking_doubles_value(
 
 #[derive(Deserialize)]
 pub struct KeyValuePayload {
-    key: String,
-    value: String,
+    pub key: String,
+    pub value: String,
 }
-
-#[command]
 pub fn edit_config_value(
     payload: KeyValuePayload,
     profile_state: State<'_, AppProfileState>,
@@ -1188,8 +1152,6 @@ pub fn edit_config_value(
     );
     Ok(())
 }
-
-#[command]
 pub fn edit_save_config_value(
     payload: KeyValuePayload,
     profile_state: State<'_, AppProfileState>,

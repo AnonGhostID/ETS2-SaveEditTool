@@ -6,10 +6,7 @@ use crate::shared::regex_helper::cragex;
 use crate::shared::trace::TraceScope;
 use crate::state::{AppProfileState, DecryptCache, ProfileCache};
 use std::path::{Path, PathBuf};
-use tauri::State;
-use tauri::command;
-
-#[command]
+use crate::tauri::State;
 pub async fn quicksave_game_info(
     profile_state: State<'_, AppProfileState>,
     profile_cache: State<'_, ProfileCache>,
@@ -38,7 +35,7 @@ pub async fn quicksave_game_info(
 
     let decrypt_cache = decrypt_cache.inner().clone();
     let path_for_worker = path.clone();
-    let (result, truck_summary) = tauri::async_runtime::spawn_blocking(move || {
+    let (result, truck_summary) = crate::tauri::async_runtime::spawn_blocking(move || {
         build_quicksave_game_info_from_path(path_for_worker, &decrypt_cache)
     })
     .await
@@ -50,8 +47,6 @@ pub async fn quicksave_game_info(
     trace.finish_ok();
     Ok(result)
 }
-
-#[command]
 pub async fn get_current_truck_summary(
     profile_state: State<'_, AppProfileState>,
     profile_cache: State<'_, ProfileCache>,
@@ -98,7 +93,7 @@ pub async fn get_current_truck_summary(
 
     let decrypt_cache = decrypt_cache.inner().clone();
     let path_for_worker = path.clone();
-    let summary = tauri::async_runtime::spawn_blocking(move || {
+    let summary = crate::tauri::async_runtime::spawn_blocking(move || {
         build_current_truck_summary_from_path(path_for_worker, &decrypt_cache)
     })
     .await

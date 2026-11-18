@@ -5,7 +5,7 @@ use crate::shared::models::profile::ActiveSaveSelection;
 use crate::shared::models::save_context::SaveContext;
 use crate::shared::paths::profile_search_roots;
 use crate::state::AppProfileState;
-use tauri::State;
+use crate::tauri::State;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedSaveContext {

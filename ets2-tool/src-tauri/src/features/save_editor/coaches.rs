@@ -34,7 +34,7 @@ impl Career {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BusStop {
     pub id: String,
@@ -42,7 +42,7 @@ pub struct BusStop {
     pub discovered: Option<bool>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BusJobLog {
     pub id: String,
@@ -50,7 +50,7 @@ pub struct BusJobLog {
     pub entries: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CoachesSnapshot {
     pub save_hash: String,

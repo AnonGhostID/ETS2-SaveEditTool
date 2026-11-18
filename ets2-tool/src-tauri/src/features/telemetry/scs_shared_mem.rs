@@ -1,7 +1,7 @@
 #[cfg(not(target_os = "windows"))]
 use sqlx::SqlitePool;
 #[cfg(not(target_os = "windows"))]
-use tauri::{AppHandle, Emitter};
+use crate::tauri::{AppHandle, Emitter};
 
 #[cfg(not(target_os = "windows"))]
 use crate::events::EVT_SYSTEM_STATUS;
@@ -15,7 +15,7 @@ mod platform {
     use std::time::Duration;
 
     use sqlx::SqlitePool;
-    use tauri::{AppHandle, Emitter};
+    use crate::tauri::{AppHandle, Emitter};
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::System::Memory::{
         FILE_MAP_READ, MEMORY_MAPPED_VIEW_ADDRESS, MapViewOfFile, OpenFileMappingW, UnmapViewOfFile,
@@ -199,7 +199,7 @@ mod platform {
                             let _ = app_for_thread.emit(EVT_TELEMETRY_JOB_EVENT, &event);
                             let app_clone = app_for_thread.clone();
                             let pool_clone = pool.clone();
-                            tauri::async_runtime::spawn(async move {
+                            crate::tauri::async_runtime::spawn(async move {
                                 let _ = link_service::handle_telemetry_job_event(
                                     &app_clone,
                                     &pool_clone,

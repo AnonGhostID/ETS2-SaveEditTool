@@ -17,14 +17,11 @@ use crate::shared::sii_parser::{
 };
 use crate::shared::trace::TraceScope;
 use crate::state::{AppProfileState, DecryptCache, ProfileCache};
-use tauri::command;
-
-#[command]
 pub async fn get_player_trailer(
     profile_path: String,
-    profile_state: tauri::State<'_, AppProfileState>,
-    profile_cache: tauri::State<'_, ProfileCache>,
-    decrypt_cache: tauri::State<'_, DecryptCache>,
+    profile_state: crate::tauri::State<'_, AppProfileState>,
+    profile_cache: crate::tauri::State<'_, ProfileCache>,
+    decrypt_cache: crate::tauri::State<'_, DecryptCache>,
 ) -> Result<PlayerTrailerResult, String> {
     let mut trace = TraceScope::new("get_player_trailer");
     dev_log!("get_player_trailer: Profil {}", profile_path);
@@ -38,7 +35,7 @@ pub async fn get_player_trailer(
         .to_string();
 
     let decrypt_cache_cloned = decrypt_cache.inner().clone();
-    let worker_result = tauri::async_runtime::spawn_blocking(move || {
+    let worker_result = crate::tauri::async_runtime::spawn_blocking(move || {
         let (content, _) = load_save_content_from_save_path(&save_path, &decrypt_cache_cloned)?;
         let parsed_context = parse_trailer_save(&content);
         let has_active_job = player_has_active_job(&parsed_context);
@@ -274,13 +271,11 @@ fn active_job_trailer_id(parsed: &ParsedTrailerSave) -> Option<String> {
         .filter(|pointer| pointer.writable)
         .map(|pointer| pointer.trailer_id)
 }
-
-#[command]
 pub async fn get_all_trailers(
     profile_path: String,
-    profile_state: tauri::State<'_, AppProfileState>,
-    profile_cache: tauri::State<'_, ProfileCache>,
-    decrypt_cache: tauri::State<'_, DecryptCache>,
+    profile_state: crate::tauri::State<'_, AppProfileState>,
+    profile_cache: crate::tauri::State<'_, ProfileCache>,
+    decrypt_cache: crate::tauri::State<'_, DecryptCache>,
 ) -> Result<Vec<ParsedTrailer>, String> {
     let mut trace = TraceScope::new("get_all_trailers");
     dev_log!("get_all_trailers: Profil {}", profile_path);
@@ -300,7 +295,7 @@ pub async fn get_all_trailers(
     }
 
     let decrypt_cache_cloned = decrypt_cache.inner().clone();
-    let parsed_trailers = tauri::async_runtime::spawn_blocking(move || {
+    let parsed_trailers = crate::tauri::async_runtime::spawn_blocking(move || {
         let (content, _) = load_save_content_from_save_path(&save_path, &decrypt_cache_cloned)?;
         let trailers_data = parse_trailers_from_sii(&content);
         let defs_data = parse_trailer_defs_from_sii(&content);

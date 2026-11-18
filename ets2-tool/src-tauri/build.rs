@@ -1,10 +1,12 @@
 fn main() {
-    // These trees are installed verbatim. Runtime diagnostics belong in app data only.
-    for directory in ["../src", "locales", "resources/plugins"] {
-        println!("cargo:rerun-if-changed={directory}");
-        reject_runtime_logs(std::path::Path::new(directory));
+    // Validate bundled runtime resource directories without Tauri/WebView build hooks.
+    for directory in ["locales", "resources/plugins"] {
+        let path = std::path::Path::new(directory);
+        if path.exists() {
+            println!("cargo:rerun-if-changed={directory}");
+            reject_runtime_logs(path);
+        }
     }
-    tauri_build::build()
 }
 
 fn reject_runtime_logs(directory: &std::path::Path) {

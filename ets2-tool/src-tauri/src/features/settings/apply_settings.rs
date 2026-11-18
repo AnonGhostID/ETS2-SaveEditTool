@@ -9,11 +9,9 @@ use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
 use std::path::Path;
-use tauri::State;
+use crate::tauri::State;
 
 use std::fs;
-use tauri::command;
-
 #[derive(Deserialize)]
 pub struct ApplyPayload {
     pub key: String,
@@ -88,8 +86,6 @@ fn write_text_with_auto_backup(
     let _ = logging_service::record_info(action, success_message, &context);
     Ok(())
 }
-
-#[command]
 pub fn apply_setting(
     payload: ApplyPayload,
     profile_state: State<'_, AppProfileState>,

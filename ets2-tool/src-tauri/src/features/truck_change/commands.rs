@@ -1,4 +1,4 @@
-use tauri::{State, command};
+use crate::tauri::{State};
 
 use crate::shared::ets2data;
 use crate::state::{AppProfileState, DecryptCache, ProfileCache};
@@ -14,8 +14,6 @@ use super::service::{
     apply_active_truck_switch_transaction, read_content_for_path, read_switch_list,
     read_switch_preview, read_truck_change_session, resolve_game_sii_path,
 };
-
-#[command]
 pub async fn list_owned_trucks_for_switch(
     save_path: Option<String>,
     profile_state: State<'_, AppProfileState>,
@@ -23,8 +21,6 @@ pub async fn list_owned_trucks_for_switch(
 ) -> Result<TruckSwitchList, String> {
     read_switch_list(save_path, profile_state.inner(), decrypt_cache.inner())
 }
-
-#[command]
 pub async fn initialize_truck_change_session(
     save_path: Option<String>,
     profile_state: State<'_, AppProfileState>,
@@ -38,8 +34,6 @@ pub async fn initialize_truck_change_session(
         truck_change_cache.inner(),
     )
 }
-
-#[command]
 pub async fn preview_active_truck_switch(
     save_path: Option<String>,
     target_truck_id: String,
@@ -55,16 +49,12 @@ pub async fn preview_active_truck_switch(
         decrypt_cache.inner(),
     )
 }
-
-#[command]
 pub async fn log_truck_change_frontend_event(
     event: String,
     detail: Option<String>,
 ) -> Result<(), String> {
     super::service::log_truck_change_frontend_event(event, detail)
 }
-
-#[command]
 pub async fn apply_active_truck_switch(
     save_path: Option<String>,
     target_truck_id: String,
@@ -86,8 +76,6 @@ pub async fn apply_active_truck_switch(
         truck_change_cache.inner(),
     )
 }
-
-#[command]
 pub async fn get_official_powertrain_catalog(
     game: Option<String>,
     game_version: Option<String>,
@@ -96,8 +84,6 @@ pub async fn get_official_powertrain_catalog(
     let game_version = game_version.unwrap_or_else(|| "unknown".to_string());
     load_official_powertrain_catalog(&ets2data::default_repo_root(), &game, &game_version)
 }
-
-#[command]
 pub async fn preview_truck_powertrain_change(
     save_path: Option<String>,
     truck_id: String,
@@ -124,8 +110,6 @@ pub async fn preview_truck_powertrain_change(
         transmission_data_path.as_deref(),
     ))
 }
-
-#[command]
 pub async fn preview_truck_transfer(
     source_save_path: String,
     target_save_path: String,

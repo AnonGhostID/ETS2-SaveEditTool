@@ -1,6 +1,6 @@
 use std::sync::{Mutex, MutexGuard, TryLockError};
 
-use tauri::State;
+use crate::tauri::State;
 
 use crate::features::trailer_change::cache::TrailerChangeSessionCache;
 use crate::features::truck_change::cache::TruckChangeSessionCache;
@@ -22,8 +22,6 @@ fn acquire_mutation_lock(lock: &Mutex<()>) -> Result<MutexGuard<'_, ()>, String>
         Err(TryLockError::Poisoned(_)) => Err("garage_mutation_lock_unavailable".to_string()),
     }
 }
-
-#[tauri::command]
 pub async fn get_all_garages(
     profile_state: State<'_, AppProfileState>,
     decrypt_cache: State<'_, DecryptCache>,
@@ -39,14 +37,12 @@ pub async fn get_all_garages(
     let decrypt_cache = decrypt_cache.inner().clone();
     let sqlite_path = app_state.sqlite_path.clone();
 
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::tauri::async_runtime::spawn_blocking(move || {
         service::get_all_garages(&selection, &selected_game, &decrypt_cache, &sqlite_path)
     })
     .await
     .map_err(|error| format!("garage_block_invalid:task_failed:{error}"))?
 }
-
-#[tauri::command]
 pub async fn get_ai_driver_management(
     profile_state: State<'_, AppProfileState>,
     decrypt_cache: State<'_, DecryptCache>,
@@ -61,14 +57,12 @@ pub async fn get_ai_driver_management(
         .clone();
     let decrypt_cache = decrypt_cache.inner().clone();
     let sqlite_path = app_state.sqlite_path.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::tauri::async_runtime::spawn_blocking(move || {
         service::get_ai_driver_management(&selection, &selected_game, &decrypt_cache, &sqlite_path)
     })
     .await
     .map_err(|error| format!("garage_block_invalid:task_failed:{error}"))?
 }
-
-#[tauri::command]
 pub fn generate_ai_drivers(
     request: AiDriverGenerateRequest,
     profile_state: State<'_, AppProfileState>,
@@ -98,8 +92,6 @@ pub fn generate_ai_drivers(
         &request,
     )
 }
-
-#[tauri::command]
 pub fn update_ai_driver_truck(
     request: AiDriverTruckAssignmentRequest,
     profile_state: State<'_, AppProfileState>,
@@ -129,8 +121,6 @@ pub fn update_ai_driver_truck(
         &request,
     )
 }
-
-#[tauri::command]
 pub fn remove_ai_drivers(
     request: AiDriverRemoveRequest,
     profile_state: State<'_, AppProfileState>,
@@ -160,8 +150,6 @@ pub fn remove_ai_drivers(
         &request,
     )
 }
-
-#[tauri::command]
 pub fn purchase_garage(
     request: GarageMutationRequest,
     profile_state: State<'_, AppProfileState>,
@@ -191,8 +179,6 @@ pub fn purchase_garage(
         &request,
     )
 }
-
-#[tauri::command]
 pub fn upgrade_owned_garage(
     request: GarageMutationRequest,
     profile_state: State<'_, AppProfileState>,
@@ -222,8 +208,6 @@ pub fn upgrade_owned_garage(
         &request,
     )
 }
-
-#[tauri::command]
 pub fn update_garage(
     request: GarageUpdateRequest,
     profile_state: State<'_, AppProfileState>,
@@ -253,8 +237,6 @@ pub fn update_garage(
         &request,
     )
 }
-
-#[tauri::command]
 pub fn buy_all_garages(
     request: GarageBuyAllRequest,
     profile_state: State<'_, AppProfileState>,
@@ -284,8 +266,6 @@ pub fn buy_all_garages(
         &request,
     )
 }
-
-#[tauri::command]
 pub fn relinquish_empty_garages(
     request: GarageRelinquishEmptyRequest,
     profile_state: State<'_, AppProfileState>,
@@ -315,8 +295,6 @@ pub fn relinquish_empty_garages(
         &request,
     )
 }
-
-#[tauri::command]
 pub fn assign_random_garage_resources(
     request: GarageResourceAssignmentRequest,
     profile_state: State<'_, AppProfileState>,
@@ -346,8 +324,6 @@ pub fn assign_random_garage_resources(
         &request,
     )
 }
-
-#[tauri::command]
 pub fn relinquish_garage_ownership(
     request: GarageMutationRequest,
     profile_state: State<'_, AppProfileState>,

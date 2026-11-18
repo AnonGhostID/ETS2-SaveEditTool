@@ -14,16 +14,14 @@ use crate::shared::user_log;
 use crate::state::{AppProfileState, DecryptCache, ProfileCache};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use tauri::Manager;
-use tauri::State;
-use tauri::command;
-
+use crate::tauri::Manager;
+use crate::tauri::State;
 use std::io::Write;
 use std::path::PathBuf;
 // use std::path::Path;
 
-fn app_cache_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    // tauri::api::path::config_dir() liefert Option<PathBuf> -> v2: app.path().config_dir()
+fn app_cache_dir(app: &crate::tauri::AppHandle) -> Result<PathBuf, String> {
+    // crate::tauri::api::path::config_dir() liefert Option<PathBuf> -> v2: app.path().config_dir()
     if let Ok(mut dir) = app.path().config_dir() {
         dir.push("save-edit-tool"); // eigener Ordner fÃ¼r die App
         if let Err(e) = fs::create_dir_all(&dir) {
@@ -34,8 +32,6 @@ fn app_cache_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         Err("Konnte Config-Verzeichnis nicht bestimmen".into())
     }
 }
-
-#[command]
 pub fn set_selected_game(
     game: String,
     state: State<'_, AppProfileState>,
@@ -45,16 +41,12 @@ pub fn set_selected_game(
     dev_log!("Game changed to: {}", game);
     Ok(game)
 }
-
-#[command]
 pub fn get_selected_game(state: State<'_, AppProfileState>) -> Result<String, String> {
     let g = state.selected_game.lock().unwrap();
     Ok(g.clone())
 }
-
-#[command]
 pub fn save_profiles_cache(
-    app: tauri::AppHandle,
+    app: crate::tauri::AppHandle,
     profiles: Vec<CachedProfile>,
 ) -> Result<String, String> {
     let dir = app_cache_dir(&app)?;
@@ -64,9 +56,7 @@ pub fn save_profiles_cache(
     fs::write(&file, json).map_err(|e| format!("Write error: {}", e))?;
     Ok(file.display().to_string())
 }
-
-#[command]
-pub fn read_profiles_cache(app: tauri::AppHandle) -> Result<Vec<CachedProfile>, String> {
+pub fn read_profiles_cache(app: crate::tauri::AppHandle) -> Result<Vec<CachedProfile>, String> {
     let dir = app_cache_dir(&app)?;
     let file = dir.join("profiles_cache.json");
     if !file.exists() {
@@ -77,9 +67,7 @@ pub fn read_profiles_cache(app: tauri::AppHandle) -> Result<Vec<CachedProfile>, 
         serde_json::from_str(&content).map_err(|e| format!("Parse error: {}", e))?;
     Ok(profiles)
 }
-
-#[command]
-pub fn save_last_profile(app: tauri::AppHandle, profile_path: String) -> Result<String, String> {
+pub fn save_last_profile(app: crate::tauri::AppHandle, profile_path: String) -> Result<String, String> {
     let dir = app_cache_dir(&app)?;
     let file = dir.join("last_profile.json");
     let obj = serde_json::json!({ "last_profile": profile_path });
@@ -87,9 +75,7 @@ pub fn save_last_profile(app: tauri::AppHandle, profile_path: String) -> Result<
     fs::write(&file, json).map_err(|e| format!("Write err: {}", e))?;
     Ok(file.display().to_string())
 }
-
-#[command]
-pub fn read_last_profile(app: tauri::AppHandle) -> Result<Option<String>, String> {
+pub fn read_last_profile(app: crate::tauri::AppHandle) -> Result<Option<String>, String> {
     let dir = app_cache_dir(&app)?;
     let file = dir.join("last_profile.json");
     if !file.exists() {
@@ -104,8 +90,6 @@ pub fn read_last_profile(app: tauri::AppHandle) -> Result<Option<String>, String
         Ok(None)
     }
 }
-
-#[command]
 pub fn set_active_profile(
     profile_path: String,
     profile_state: State<'_, AppProfileState>,
@@ -134,8 +118,6 @@ pub fn set_active_profile(
     trace.finish_ok();
     Ok(())
 }
-
-#[command]
 pub fn set_current_save(
     save_path: String,
     state: State<'_, AppProfileState>,
@@ -151,8 +133,6 @@ pub fn set_current_save(
     trace.finish_ok();
     Ok(())
 }
-
-#[tauri::command]
 pub fn switch_profile(
     cache: State<DecryptCache>,
     new_profile_path: String,
@@ -169,12 +149,10 @@ pub fn switch_profile(
     trace.finish_ok();
     Ok(())
 }
-
-#[command]
 pub async fn find_profile_saves(profile_path: String) -> Result<Vec<SaveInfo>, String> {
     let mut trace =
         TraceScope::with_fields("find_profile_saves", &[("path", profile_path.clone())]);
-    let result = tauri::async_runtime::spawn_blocking(move || scan_profile_saves(&profile_path))
+    let result = crate::tauri::async_runtime::spawn_blocking(move || scan_profile_saves(&profile_path))
         .await
         .map_err(|error| format!("find_profile_saves join failed: {}", error))?;
     if let Err(error) = result.as_ref() {
@@ -265,8 +243,6 @@ fn classify_save_folder(folder: &str) -> SaveKind {
         _ => SaveKind::Invalid,
     }
 }
-
-#[command]
 pub fn find_ets2_profiles(state: State<'_, AppProfileState>) -> Vec<ProfileInfo> {
     let _ = user_log::user_log_info("ProfileManager", "Profile search started.");
     dev_log!("Starte Profil-Sucheâ€¦");
@@ -375,8 +351,6 @@ pub fn find_ets2_profiles(state: State<'_, AppProfileState>) -> Vec<ProfileInfo>
     }
     found_profiles
 }
-
-#[command]
 pub fn load_profile(
     profile_path: String,
     save_path: Option<String>,

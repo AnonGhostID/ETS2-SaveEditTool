@@ -8,7 +8,7 @@ mod platform {
     use std::sync::atomic::Ordering;
     use std::thread;
     use std::time::Duration;
-    use tauri::{AppHandle, Emitter};
+    use crate::tauri::{AppHandle, Emitter};
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::System::Memory::{
         FILE_MAP_READ, MEMORY_MAPPED_VIEW_ADDRESS, MapViewOfFile, OpenFileMappingW, UnmapViewOfFile,
@@ -433,7 +433,7 @@ pub fn start_terminal_telemetry_loop() {}
 
 #[cfg(not(target_os = "windows"))]
 pub fn start_frontend_telemetry_bridge(
-    _app: tauri::AppHandle,
+    _app: crate::tauri::AppHandle,
     _runtime: std::sync::Arc<crate::state::CareerRuntime>,
 ) {
 }

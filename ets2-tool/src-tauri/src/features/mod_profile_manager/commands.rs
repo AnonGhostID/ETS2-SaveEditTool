@@ -13,7 +13,7 @@ use crate::state::{AppProfileState, DecryptCache, ProfileCache};
 use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{AppHandle, State};
+use crate::tauri::{AppHandle, State};
 use uuid::Uuid;
 
 static MOD_SCAN_RUNNING: AtomicBool = AtomicBool::new(false);
@@ -137,8 +137,6 @@ fn build_preset_mods(
 
     preset_mods
 }
-
-#[tauri::command]
 pub fn load_mod_profile_manager_state(
     app: AppHandle,
     profile_state: State<'_, AppProfileState>,
@@ -194,8 +192,6 @@ pub fn load_mod_profile_manager_state(
     }
     result
 }
-
-#[tauri::command]
 pub fn scan_mods(
     app: AppHandle,
     profile_state: State<'_, AppProfileState>,
@@ -227,8 +223,6 @@ pub fn scan_mods(
         Ok(inventory.mods)
     })
 }
-
-#[tauri::command]
 pub fn scan_mods_light(
     app: AppHandle,
     profile_state: State<'_, AppProfileState>,
@@ -263,8 +257,6 @@ pub fn scan_mods_light(
     }
     result
 }
-
-#[tauri::command]
 pub fn scan_mods_deep(
     app: AppHandle,
     profile_state: State<'_, AppProfileState>,
@@ -295,8 +287,6 @@ pub fn scan_mods_deep(
     }
     result
 }
-
-#[tauri::command]
 pub fn list_mod_presets(app: AppHandle, game: Option<String>) -> Result<Vec<ModPreset>, String> {
     catch_command("list_mod_presets", || {
         let game = match game.as_deref() {
@@ -306,8 +296,6 @@ pub fn list_mod_presets(app: AppHandle, game: Option<String>) -> Result<Vec<ModP
         presets::list_presets(&app, game)
     })
 }
-
-#[tauri::command]
 pub fn create_mod_preset(
     app: AppHandle,
     profile_state: State<'_, AppProfileState>,
@@ -393,8 +381,6 @@ pub fn create_mod_preset(
         Ok(preset)
     })
 }
-
-#[tauri::command]
 pub fn compare_mod_preset(
     app: AppHandle,
     profile_state: State<'_, AppProfileState>,
@@ -432,8 +418,6 @@ pub fn compare_mod_preset(
         Ok(result)
     })
 }
-
-#[tauri::command]
 pub fn export_mod_preset(app: AppHandle, preset_id: String) -> Result<String, String> {
     crate::dev_log!(
         "[mod-profile-manager] export preset requested preset_id={}",
@@ -463,8 +447,6 @@ pub fn export_mod_preset(app: AppHandle, preset_id: String) -> Result<String, St
         }
     })
 }
-
-#[tauri::command]
 pub fn import_mod_preset(app: AppHandle) -> Result<Option<ModPreset>, String> {
     crate::dev_log!("[mod-profile-manager] import preset requested");
     log_user_event("mod_profile_manager import preset", "start");
@@ -487,8 +469,6 @@ pub fn import_mod_preset(app: AppHandle) -> Result<Option<ModPreset>, String> {
         Ok(imported)
     })
 }
-
-#[tauri::command]
 pub fn delete_mod_preset(app: AppHandle, preset_id: String) -> Result<(), String> {
     crate::dev_log!(
         "[mod-profile-manager] delete preset requested preset_id={}",
@@ -508,8 +488,6 @@ pub fn delete_mod_preset(app: AppHandle, preset_id: String) -> Result<(), String
         Ok(())
     })
 }
-
-#[tauri::command]
 pub fn select_manual_workshop_directory(
     app: AppHandle,
     game: String,
@@ -528,8 +506,6 @@ pub fn select_manual_workshop_directory(
         Ok(picked)
     })
 }
-
-#[tauri::command]
 pub fn clear_manual_workshop_directory(app: AppHandle, game: String) -> Result<(), String> {
     catch_command("clear_manual_workshop_directory", || {
         let game = GameType::try_from(game.as_str())?;
@@ -541,27 +517,19 @@ pub fn clear_manual_workshop_directory(app: AppHandle, game: String) -> Result<(
         Ok(())
     })
 }
-
-#[tauri::command]
 pub fn fetch_workshop_mod(input: String) -> Result<WorkshopMod, String> {
     catch_command("fetch_workshop_mod", || {
         workshop_api::fetch_workshop_mod(&input)
     })
 }
-
-#[tauri::command]
 pub fn load_mod_sandboxes(app: AppHandle) -> Result<SandboxCollection, String> {
     catch_command("load_mod_sandboxes", || sandbox::load_sandboxes(&app))
 }
-
-#[tauri::command]
 pub fn save_mod_sandboxes(app: AppHandle, collection: SandboxCollection) -> Result<(), String> {
     catch_command("save_mod_sandboxes", || {
         sandbox::save_sandboxes(&app, &collection)
     })
 }
-
-#[tauri::command]
 pub fn create_mod_sandbox(
     app: AppHandle,
     title: String,
@@ -571,15 +539,11 @@ pub fn create_mod_sandbox(
         sandbox::add_sandbox(&app, title, description)
     })
 }
-
-#[tauri::command]
 pub fn delete_mod_sandbox(app: AppHandle, sandbox_id: String) -> Result<SandboxCollection, String> {
     catch_command("delete_mod_sandbox", || {
         sandbox::remove_sandbox(&app, &sandbox_id)
     })
 }
-
-#[tauri::command]
 pub fn add_mod_to_sandbox(
     app: AppHandle,
     sandbox_id: String,
@@ -595,8 +559,6 @@ pub fn add_mod_to_sandbox(
         )
     })
 }
-
-#[tauri::command]
 pub fn upsert_sandbox_preset(
     app: AppHandle,
     sandbox_preset: ModSandbox,
@@ -605,15 +567,11 @@ pub fn upsert_sandbox_preset(
         sandbox::upsert_sandbox_preset(&app, sandbox_preset)
     })
 }
-
-#[tauri::command]
 pub fn upsert_test_sandbox_preset(app: AppHandle) -> Result<SandboxCollection, String> {
     catch_command("upsert_test_sandbox_preset", || {
         sandbox::upsert_test_sandbox_preset(&app)
     })
 }
-
-#[tauri::command]
 pub fn remove_mod_from_sandbox(
     app: AppHandle,
     sandbox_id: String,
@@ -623,8 +581,6 @@ pub fn remove_mod_from_sandbox(
         sandbox::remove_workshop_mod_from_sandbox(&app, &sandbox_id, mod_id)
     })
 }
-
-#[tauri::command]
 pub fn toggle_mod_in_sandbox(
     app: AppHandle,
     sandbox_id: String,
@@ -635,8 +591,6 @@ pub fn toggle_mod_in_sandbox(
         sandbox::toggle_workshop_mod_enabled(&app, &sandbox_id, mod_id, enabled)
     })
 }
-
-#[tauri::command]
 pub fn apply_sandbox_to_active_profile(
     app: AppHandle,
     profile_state: State<'_, AppProfileState>,
@@ -652,62 +606,44 @@ pub fn apply_sandbox_to_active_profile(
         )
     })
 }
-
-#[tauri::command]
 pub fn open_steam_console() -> Result<(), String> {
     catch_command("open_steam_console", launcher::open_steam_console)
 }
-
-#[tauri::command]
 pub fn open_workshop_page(mod_id: String) -> Result<(), String> {
     catch_command("open_workshop_page", || {
         launcher::open_workshop_page(&mod_id)
     })
 }
-
-#[tauri::command]
 pub fn open_workshop_subscribe_page(mod_id: String) -> Result<(), String> {
     catch_command("open_workshop_subscribe_page", || {
         launcher::open_workshop_subscribe_page(&mod_id)
     })
 }
-
-#[tauri::command]
 pub fn open_sandbox_mod_workshop_page(steam_id: String) -> Result<(), String> {
     catch_command("open_sandbox_mod_workshop_page", || {
         launcher::open_sandbox_mod_workshop_page(&steam_id)
     })
 }
-
-#[tauri::command]
 pub fn open_sandbox_mod_download_url(url: String) -> Result<(), String> {
     catch_command("open_sandbox_mod_download_url", || {
         launcher::open_external_url(&url)
     })
 }
-
-#[tauri::command]
 pub fn open_sandbox_mod_in_steam(steam_id: String) -> Result<(), String> {
     catch_command("open_sandbox_mod_in_steam", || {
         launcher::open_sandbox_mod_in_steam(&steam_id)
     })
 }
-
-#[tauri::command]
 pub fn check_workshop_mod_downloaded(app_id: u32, mod_id: u64) -> Result<bool, String> {
     catch_command("check_workshop_mod_downloaded", || {
         Ok(workshop_api::is_workshop_mod_downloaded(app_id, mod_id))
     })
 }
-
-#[tauri::command]
 pub fn check_workshop_mod_download_status(mod_id: String) -> Result<WorkshopInstallStatus, String> {
     catch_command("check_workshop_mod_download_status", || {
         workshop_api::check_ets2_workshop_mod_installed(&mod_id)
     })
 }
-
-#[tauri::command]
 pub fn check_workshop_mods_download_status(
     mod_ids: Vec<String>,
 ) -> Result<Vec<WorkshopInstallStatus>, String> {
@@ -718,32 +654,24 @@ pub fn check_workshop_mods_download_status(
             .collect()
     })
 }
-
-#[tauri::command]
 pub fn scan_steam_workshop_mods(app: AppHandle) -> Result<SteamWorkshopCache, String> {
     crate::dev_log!("[SteamWorkshopCache] scan command called");
     catch_command("scan_steam_workshop_mods", || {
         sandbox::scan_steam_workshop_mods(&app)
     })
 }
-
-#[tauri::command]
 pub fn load_steam_workshop_mod_cache(app: AppHandle) -> Result<SteamWorkshopCache, String> {
     crate::dev_log!("[SteamWorkshopCache] load command called");
     catch_command("load_steam_workshop_mod_cache", || {
         sandbox::load_steam_workshop_mod_cache(&app)
     })
 }
-
-#[tauri::command]
 pub fn refresh_workshop_mod_cache(app: AppHandle) -> Result<SteamWorkshopCache, String> {
     crate::dev_log!("[SteamWorkshopCache] refresh command called");
     catch_command("refresh_workshop_mod_cache", || {
         sandbox::refresh_workshop_mod_cache(&app)
     })
 }
-
-#[tauri::command]
 pub fn check_workshop_mod_available(
     app: AppHandle,
     app_id: u32,
@@ -758,8 +686,6 @@ pub fn check_workshop_mod_available(
         sandbox::check_workshop_mod_available(&app, app_id, &workshop_id)
     })
 }
-
-#[tauri::command]
 pub fn load_sandbox_mod_presets() -> Result<Vec<SandboxModPreset>, String> {
     crate::dev_log!("[SandboxPreset] command load_sandbox_mod_presets");
     catch_command(
@@ -767,8 +693,6 @@ pub fn load_sandbox_mod_presets() -> Result<Vec<SandboxModPreset>, String> {
         sandbox::load_sandbox_mod_presets,
     )
 }
-
-#[tauri::command]
 pub fn check_sandbox_preset_mods(
     app: AppHandle,
     preset_id: String,
@@ -781,8 +705,6 @@ pub fn check_sandbox_preset_mods(
         sandbox::check_sandbox_mod_preset(&app, &preset_id)
     })
 }
-
-#[tauri::command(rename_all = "snake_case")]
 pub fn activate_sandbox_mod_preset(
     app: AppHandle,
     profile_state: State<'_, AppProfileState>,

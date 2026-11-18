@@ -5,8 +5,7 @@ use sqlx::SqlitePool;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use tauri::command;
-use tauri::{AppHandle, Emitter, State};
+use crate::tauri::{AppHandle, Emitter, State};
 
 use crate::events::{
     EVT_DISPATCHER_ASSIGN_PREPARE_ERROR, EVT_DISPATCHER_ASSIGN_PREPARE_PROGRESS,
@@ -101,8 +100,6 @@ pub struct DispatcherWriteOutputDto {
     pub load_path_warning: Option<String>,
     pub final_link_status: String,
 }
-
-#[command]
 pub fn career_get_status(career: State<'_, CareerState>) -> Result<CareerStatus, String> {
     let runtime = career.runtime.as_ref();
     crate::dev_log!("[career] command: career_get_status");
@@ -119,8 +116,6 @@ pub fn career_get_status(career: State<'_, CareerState>) -> Result<CareerStatus,
             .clone(),
     })
 }
-
-#[command]
 pub fn get_plugin_status(profile: State<'_, AppProfileState>) -> Result<bool, String> {
     let selected_game = profile
         .selected_game
@@ -131,14 +126,10 @@ pub fn get_plugin_status(profile: State<'_, AppProfileState>) -> Result<bool, St
     let game = ScsGame::try_from(selected_game.as_str())?;
     Ok(plugin_installer::plugin_file_installed(game).unwrap_or(false))
 }
-
-#[command]
 pub fn career_get_overview(career: State<'_, CareerState>) -> Result<CareerOverview, String> {
     crate::dev_log!("[career] command: career_get_overview");
     crate::features::career::overview::load_overview(career.runtime.as_ref())
 }
-
-#[command]
 pub fn career_list_trips(career: State<'_, CareerState>) -> Result<Vec<TripSummary>, String> {
     let runtime = career.runtime.as_ref();
     crate::dev_log!("[career] command: career_list_trips");
@@ -151,8 +142,6 @@ pub fn career_list_trips(career: State<'_, CareerState>) -> Result<Vec<TripSumma
 
     crate::features::career::logbook::list_trips(&db_path, 200)
 }
-
-#[command]
 pub fn career_get_active_job(
     career: State<'_, CareerState>,
 ) -> Result<Option<JobLogEntry>, String> {
@@ -195,8 +184,6 @@ pub fn career_get_active_job(
 
     Ok(active_entry)
 }
-
-#[command]
 pub fn career_get_job_log(career: State<'_, CareerState>) -> Result<Vec<JobLogEntry>, String> {
     let runtime = career.runtime.as_ref();
     crate::dev_log!("[career] command: career_get_job_log");
@@ -213,8 +200,6 @@ pub fn career_get_job_log(career: State<'_, CareerState>) -> Result<Vec<JobLogEn
     job_log::enrich_job_entries(&conn, &mut jobs)?;
     Ok(jobs)
 }
-
-#[command]
 pub fn career_get_job_stats(career: State<'_, CareerState>) -> Result<JobStats, String> {
     let runtime = career.runtime.as_ref();
     crate::dev_log!("[career] command: career_get_job_stats");
@@ -229,8 +214,6 @@ pub fn career_get_job_stats(career: State<'_, CareerState>) -> Result<JobStats, 
     job_log::ensure_tables(&conn)?;
     job_log::load_job_stats(&conn)
 }
-
-#[command]
 pub fn career_get_analytics_summary(
     filters: Option<AnalyticsFilters>,
     career: State<'_, CareerState>,
@@ -239,8 +222,6 @@ pub fn career_get_analytics_summary(
     let conn = open_connection(career.runtime.as_ref())?;
     analytics::load_summary(&conn, filters)
 }
-
-#[command]
 pub fn career_get_analytics_job_history(
     filters: Option<AnalyticsFilters>,
     career: State<'_, CareerState>,
@@ -249,8 +230,6 @@ pub fn career_get_analytics_job_history(
     let conn = open_connection(career.runtime.as_ref())?;
     analytics::load_history(&conn, filters)
 }
-
-#[command]
 pub fn career_scan_profile_job_history(
     profile_path: Option<String>,
     career: State<'_, CareerState>,
@@ -275,8 +254,6 @@ pub fn career_scan_profile_job_history(
     let conn = open_connection(career.runtime.as_ref())?;
     analytics::scan_profile_job_history(&conn, &selected_profile, Some(&selected_game))
 }
-
-#[command]
 pub fn career_export_analytics_csv(
     app: AppHandle,
     filters: Option<AnalyticsFilters>,
@@ -286,8 +263,6 @@ pub fn career_export_analytics_csv(
     let conn = open_connection(career.runtime.as_ref())?;
     analytics::export_csv(&app, &conn, filters)
 }
-
-#[command]
 pub fn career_generate_jobs(career: State<'_, CareerState>) -> Result<Vec<Job>, String> {
     crate::dev_log!("[career] command: career_generate_jobs");
     let runtime = career.runtime.as_ref();
@@ -296,8 +271,6 @@ pub fn career_generate_jobs(career: State<'_, CareerState>) -> Result<Vec<Job>, 
     runtime.overview_dirty.store(true, Ordering::Relaxed);
     Ok(jobs)
 }
-
-#[command]
 pub fn career_accept_job(job_id: String, career: State<'_, CareerState>) -> Result<Job, String> {
     crate::dev_log!("[career] command: career_accept_job -> {}", job_id);
     let runtime = career.runtime.as_ref();
@@ -306,8 +279,6 @@ pub fn career_accept_job(job_id: String, career: State<'_, CareerState>) -> Resu
     runtime.overview_dirty.store(true, Ordering::Relaxed);
     Ok(job)
 }
-
-#[command]
 pub fn career_complete_job(job_id: String, career: State<'_, CareerState>) -> Result<Job, String> {
     crate::dev_log!("[career] command: career_complete_job -> {}", job_id);
     let runtime = career.runtime.as_ref();
@@ -316,8 +287,6 @@ pub fn career_complete_job(job_id: String, career: State<'_, CareerState>) -> Re
     runtime.overview_dirty.store(true, Ordering::Relaxed);
     Ok(job)
 }
-
-#[command]
 pub fn dispatcher_get_market_jobs(
     filter: Option<DispatcherJobFilter>,
     career: State<'_, CareerState>,
@@ -327,8 +296,6 @@ pub fn dispatcher_get_market_jobs(
     let conn = open_connection(career.runtime.as_ref())?;
     dispatcher::dispatcher_get_market_jobs(&conn, filter, &save_context)
 }
-
-#[command]
 pub fn dispatcher_get_open_jobs(
     filter: Option<DispatcherJobFilter>,
     career: State<'_, CareerState>,
@@ -338,8 +305,6 @@ pub fn dispatcher_get_open_jobs(
     let conn = open_connection(career.runtime.as_ref())?;
     dispatcher::dispatcher_get_open_jobs(&conn, filter, &save_context)
 }
-
-#[command]
 pub fn dispatcher_get_job_details(
     job_id: String,
     career: State<'_, CareerState>,
@@ -349,8 +314,6 @@ pub fn dispatcher_get_job_details(
     let conn = open_connection(career.runtime.as_ref())?;
     dispatcher::dispatcher_get_job_details(&conn, &job_id, &save_context)
 }
-
-#[command]
 pub fn dispatcher_get_job_by_id(
     job_id: String,
     career: State<'_, CareerState>,
@@ -360,8 +323,6 @@ pub fn dispatcher_get_job_by_id(
     let conn = open_connection(career.runtime.as_ref())?;
     dispatcher::dispatcher_get_job_by_id(&conn, &job_id, &save_context)
 }
-
-#[command]
 pub fn dispatcher_accept_job(
     job_id: String,
     career: State<'_, CareerState>,
@@ -374,8 +335,6 @@ pub fn dispatcher_accept_job(
     runtime.overview_dirty.store(true, Ordering::Relaxed);
     Ok(result)
 }
-
-#[command]
 pub fn dispatcher_get_active_jobs(
     career: State<'_, CareerState>,
     profile: State<'_, AppProfileState>,
@@ -384,8 +343,6 @@ pub fn dispatcher_get_active_jobs(
     let conn = open_connection(career.runtime.as_ref())?;
     dispatcher::dispatcher_get_active_jobs(&conn, &save_context)
 }
-
-#[command]
 pub fn dispatcher_cancel_job(
     job_id: String,
     career: State<'_, CareerState>,
@@ -398,8 +355,6 @@ pub fn dispatcher_cancel_job(
     runtime.overview_dirty.store(true, Ordering::Relaxed);
     Ok(result)
 }
-
-#[command]
 pub fn dispatcher_get_job_history(
     career: State<'_, CareerState>,
     profile: State<'_, AppProfileState>,
@@ -408,8 +363,6 @@ pub fn dispatcher_get_job_history(
     let conn = open_connection(career.runtime.as_ref())?;
     dispatcher::dispatcher_get_job_history(&conn, &save_context)
 }
-
-#[command]
 pub fn dispatcher_get_company_contacts(
     career: State<'_, CareerState>,
     profile: State<'_, AppProfileState>,
@@ -418,8 +371,6 @@ pub fn dispatcher_get_company_contacts(
     let conn = open_connection(career.runtime.as_ref())?;
     dispatcher::dispatcher_get_company_contacts(&conn, &save_context)
 }
-
-#[command]
 pub fn dispatcher_create_offer(
     input: DispatcherCreateOfferInput,
     career: State<'_, CareerState>,
@@ -430,16 +381,12 @@ pub fn dispatcher_create_offer(
     runtime.overview_dirty.store(true, Ordering::Relaxed);
     Ok(result)
 }
-
-#[command]
 pub fn dispatcher_get_offers(
     career: State<'_, CareerState>,
 ) -> Result<Vec<DispatcherOffer>, String> {
     let conn = open_connection(career.runtime.as_ref())?;
     dispatcher::dispatcher_get_offers(&conn)
 }
-
-#[command]
 pub fn dispatcher_cancel_offer(
     offer_id: String,
     career: State<'_, CareerState>,
@@ -450,8 +397,6 @@ pub fn dispatcher_cancel_offer(
     runtime.overview_dirty.store(true, Ordering::Relaxed);
     Ok(result)
 }
-
-#[command]
 pub fn dispatcher_respond_to_counter(
     input: DispatcherRespondToCounterInput,
     career: State<'_, CareerState>,
@@ -462,8 +407,6 @@ pub fn dispatcher_respond_to_counter(
     runtime.overview_dirty.store(true, Ordering::Relaxed);
     Ok(result)
 }
-
-#[command]
 pub fn dispatcher_get_dispatcher_overview(
     career: State<'_, CareerState>,
     profile: State<'_, AppProfileState>,
@@ -472,8 +415,6 @@ pub fn dispatcher_get_dispatcher_overview(
     let conn = open_connection(career.runtime.as_ref())?;
     dispatcher::dispatcher_get_dispatcher_overview(&conn, &save_context)
 }
-
-#[command]
 pub fn dispatcher_generate_jobs(
     career: State<'_, CareerState>,
     profile: State<'_, AppProfileState>,
@@ -485,8 +426,6 @@ pub fn dispatcher_generate_jobs(
     runtime.overview_dirty.store(true, Ordering::Relaxed);
     Ok(result)
 }
-
-#[command]
 pub fn dispatcher_generate_universal_jobs(
     force: Option<bool>,
     config: Option<DispatcherGenerationConfigInput>,
@@ -505,8 +444,6 @@ pub fn dispatcher_generate_universal_jobs(
     runtime.overview_dirty.store(true, Ordering::Relaxed);
     Ok(result)
 }
-
-#[command]
 pub fn dispatcher_get_generation_status(
     career: State<'_, CareerState>,
     profile: State<'_, AppProfileState>,
@@ -515,8 +452,6 @@ pub fn dispatcher_get_generation_status(
     let conn = open_connection(career.runtime.as_ref())?;
     dispatcher::dispatcher_get_generation_status(&conn, &save_context)
 }
-
-#[command]
 pub fn dispatcher_cleanup_expired_jobs(
     career: State<'_, CareerState>,
     profile: State<'_, AppProfileState>,
@@ -528,8 +463,6 @@ pub fn dispatcher_cleanup_expired_jobs(
     runtime.overview_dirty.store(true, Ordering::Relaxed);
     Ok(result)
 }
-
-#[command]
 pub fn dispatcher_restore_jobs_for_last_quicksave(
     career: State<'_, CareerState>,
     profile: State<'_, AppProfileState>,
@@ -541,8 +474,6 @@ pub fn dispatcher_restore_jobs_for_last_quicksave(
     runtime.overview_dirty.store(true, Ordering::Relaxed);
     Ok(result)
 }
-
-#[command]
 pub fn dispatcher_link_job_to_save_context(
     job_id: String,
     career: State<'_, CareerState>,
@@ -555,8 +486,6 @@ pub fn dispatcher_link_job_to_save_context(
     runtime.overview_dirty.store(true, Ordering::Relaxed);
     Ok(result)
 }
-
-#[command]
 pub fn dispatcher_assign_job_to_active_save(
     job_id: String,
     career: State<'_, CareerState>,
@@ -569,8 +498,6 @@ pub fn dispatcher_assign_job_to_active_save(
     runtime.overview_dirty.store(true, Ordering::Relaxed);
     Ok(result)
 }
-
-#[command]
 pub async fn dispatcher_assign_and_prepare_ets_link(
     job_id: String,
     app: AppHandle,
@@ -587,8 +514,6 @@ pub async fn dispatcher_assign_and_prepare_ets_link(
     )
     .await
 }
-
-#[command]
 pub async fn dispatcher_assign_and_prepare_and_write(
     job_id: String,
     auto_write: bool,
@@ -607,8 +532,6 @@ pub async fn dispatcher_assign_and_prepare_and_write(
     )
     .await
 }
-
-#[command]
 pub fn dispatcher_accept_generated_job(
     job_id: String,
     career: State<'_, CareerState>,
@@ -621,8 +544,6 @@ pub fn dispatcher_accept_generated_job(
     runtime.overview_dirty.store(true, Ordering::Relaxed);
     Ok(result)
 }
-
-#[command]
 pub fn dispatcher_get_jobs_for_active_save(
     career: State<'_, CareerState>,
     profile: State<'_, AppProfileState>,
@@ -631,8 +552,6 @@ pub fn dispatcher_get_jobs_for_active_save(
     let conn = open_connection(career.runtime.as_ref())?;
     dispatcher::dispatcher_get_jobs_for_active_save(&conn, &save_context)
 }
-
-#[command]
 pub fn dispatcher_mark_job_synced_to_ets2(
     job_id: String,
     route_reference: Option<String>,
@@ -651,8 +570,6 @@ pub fn dispatcher_mark_job_synced_to_ets2(
     runtime.overview_dirty.store(true, Ordering::Relaxed);
     Ok(result)
 }
-
-#[command]
 pub fn dispatcher_get_jobs_by_save_context(
     status: Option<String>,
     career: State<'_, CareerState>,
@@ -1284,7 +1201,7 @@ mod tests {
 
     #[test]
     fn assign_and_prepare_sets_status_prepared() {
-        tauri::async_runtime::block_on(async {
+        crate::tauri::async_runtime::block_on(async {
             let context = setup_test_context("test_company", "Test Company", "Berlin").await;
 
             let result = dispatcher_assign_and_prepare_ets_link_inner(
@@ -1314,7 +1231,7 @@ mod tests {
 
     #[test]
     fn prepare_failure_leaves_job_assigned_and_marks_error() {
-        tauri::async_runtime::block_on(async {
+        crate::tauri::async_runtime::block_on(async {
             let context =
                 setup_test_context("missing_company", "Missing Company", "UnknownCity").await;
 
@@ -1352,7 +1269,7 @@ mod tests {
 
     #[test]
     fn assign_and_prepare_is_idempotent() {
-        tauri::async_runtime::block_on(async {
+        crate::tauri::async_runtime::block_on(async {
             let context = setup_test_context("test_company", "Test Company", "Berlin").await;
 
             let first = dispatcher_assign_and_prepare_ets_link_inner(
@@ -1391,7 +1308,7 @@ mod tests {
 
     #[test]
     fn prepare_resolves_tokens_for_missing_company_against_save_depots() {
-        tauri::async_runtime::block_on(async {
+        crate::tauri::async_runtime::block_on(async {
             let context =
                 setup_test_context("north-axis-logistics", "North Axis Logistics", "Berlin").await;
 
@@ -1432,7 +1349,7 @@ mod tests {
 
     #[test]
     fn assign_prepare_write_sets_requires_load_and_injected() {
-        tauri::async_runtime::block_on(async {
+        crate::tauri::async_runtime::block_on(async {
             let context = setup_test_context("test_company", "Test Company", "Berlin").await;
 
             let result = dispatcher_assign_prepare_write_inner(
@@ -1480,7 +1397,7 @@ mod tests {
 
     #[test]
     fn assign_prepare_write_is_idempotent_when_already_written() {
-        tauri::async_runtime::block_on(async {
+        crate::tauri::async_runtime::block_on(async {
             let context = setup_test_context("test_company", "Test Company", "Berlin").await;
 
             let first = dispatcher_assign_prepare_write_inner(

@@ -12,8 +12,8 @@ use chrono::Local;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
-use tauri::AppHandle;
-use tauri_plugin_dialog::DialogExt;
+use crate::tauri::AppHandle;
+use crate::tauri_plugin_dialog::DialogExt;
 use uuid::Uuid;
 use walkdir::WalkDir;
 use zip::write::FileOptions;
@@ -445,7 +445,7 @@ fn ensure_unique_archive_name(export_dir: &Path, profile_name: &str) -> String {
     archive_name
 }
 
-fn file_path_to_string(path: tauri_plugin_dialog::FilePath) -> Result<String, String> {
+fn file_path_to_string(path: crate::tauri_plugin_dialog::FilePath) -> Result<String, String> {
     path.into_path()
         .map(|value| value.display().to_string())
         .map_err(|_| "Der ausgewaehlte Dateidialog-Pfad konnte nicht gelesen werden.".to_string())

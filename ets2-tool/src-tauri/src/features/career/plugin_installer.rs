@@ -7,7 +7,7 @@ use std::time::SystemTime;
 #[cfg(target_os = "windows")]
 use regex::Regex;
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Manager, Runtime};
+use crate::tauri::{AppHandle, Manager, Runtime};
 #[cfg(target_os = "windows")]
 use winreg::{RegKey, enums::*};
 

@@ -1,349 +1,43 @@
-# Tauri + Vanilla
+# ETS2 / ATS Save-Edit Tool (Native GUI Edition)
 
-This template should help get you started developing with Tauri in vanilla HTML, CSS and Javascript.
+A pure-Rust, cross-platform native desktop application (`eframe` / `egui`) for editing Euro Truck Simulator 2 and American Truck Simulator profiles, decrypting `game.sii` / `info.sii` saves, managing trucks, trailers, garages, AI drivers, mods, and running a live Career & Freight Dispatcher workspace—with **zero WebView or browser runtime**.
 
-## Recommended IDE Setup
+## Features
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+- **Save Editor:** Edit player money, experience (XP), level, all 6 driver skills (ADR, Long Distance, Heavy Cargo, Fragile, Urgent, Eco Driving), global/profile `config.cfg` settings (Traffic, Developer mode, Console, Convoy size, Double trailer parking), and Project Coaches XP.
+- **Vehicles & Powertrain:** Repair and refuel player truck/trailer, edit license plates, odometer, fuel, and component wear, switch active truck/trailer safely with validation, and preview official powertrain (engine/transmission) swaps.
+- **Garages & AI Drivers:** Inspect all garages, buy/upgrade/sell garages individually or in bulk, set headquarters, and generate/manage AI drivers.
+- **Career, Telemetry & Freight Dispatcher:** Monitor live SCS shared-memory telemetry, generate freight market and universal jobs, inject jobs directly into your active quicksave, view trip logbooks, export CSV analytics, and manage your local VTC.
+- **Mod Profile Manager & Conflict Analyzer:** Scan local and Steam Workshop mods, manage mod presets and sandboxes, and run standard/deep crash & mod conflict diagnostics.
+- **Profile Tools, Save Health & Backups:** Clone and rename profiles, copy `controls.sii` and mod lists between profiles, export/import shared profile ZIP archives, run the Save Health Monitor with one-click auto-fixes, and preview/restore automatic save backups.
 
+## Building & Running
 
-Template created! To get started run:
-cd ets2-tool
-cargo tauri android init
-
-For Desktop development, run:
-cargo tauri dev
-
-## Project Coaches
-
-The save editor provides separate Truck and Project Coaches careers in the
-existing XP dialog, with muted blue truck and sage bus tabs. Each career retains
-its own unsaved input and validation state when switching tabs. Saving updates
-only the selected career and keeps the dialog open; closing discards remaining
-drafts. Truck progression includes the existing level calculations, next-level
-progress and access to the skill editor. Bus XP never use the truck level table
-or alter truck skills; available bus statistics remain read-only in the dialog.
-The Project Coaches tab reads bus statistics, referenced stops and discovery
-counts, bus references, the active bus-job reference and bus trip logs.
-Statistics other than XP and all references remain read-only. Distance and time
-values are displayed without conversion because their units are not verified.
-
-XP edits target the unique economy unit, use the existing automatic backup
-mechanism and verify the saved content by reading it again. Unknown units,
-fields and arrays remain in the save. Missing or invalid career XP fields are
-not added; saves without Coaches fields continue to support truck XP.
-The editor rejects saves changed since loading. No bus, route or job objects
-are generated. Stop discovery remains read-only pending validated examples.
-
-Checks: `cargo test --manifest-path src-tauri/Cargo.toml --bin ets2-tool`,
-`node src-tauri/src/features/save_editor/frontend_tests.mjs`,
-`node scripts/check_i18n.mjs` and `node scripts/check_ui.mjs`.
-Browser checks require a local Chrome installation or `CHROME_PATH`.
-
-## Application logs
-
-Settings provides **User logs** with file metadata, level filters and a scrolling
-viewer showing the newest entries first. The dialog loads automatically and
-checks for changes while visible. **Export user logs** writes the complete
-current log as a UTF-8 `.log` report with diagnostic header to Downloads,
-independently of the selected filter. A native Save dialog is the fallback when
-Downloads cannot be written. Filenames include local date/time and seconds;
-collisions create a new name. Existing logs are never overwritten. **Clear
-cache** only removes files in the dedicated temporary application cache.
-
-Rust and JavaScript errors are recorded locally in
-`<Tauri local application data>/support/logs/application.log.txt`. Entries append
-across restarts, include operation identifiers and redact private paths and known
-secret formats. The background writer rotates at 5 MiB; managed TXT archives
-expire after 14 days and the total managed log size is limited to 20 MiB.
-No reports are uploaded automatically. Existing legacy reports remain untouched.
-
-Implementation and tests: [Logging](src-tauri/src/features/logging/README.md).
-
-## ETS2 Data Location
-
-The Settings tools include an ETS2 Data Location modal for switching between the default Documents folder and a custom `-homedir` root. Changing the location refreshes profile and save discovery and uses the selected folder for profiles, Steam profiles, local mods, config files and logs.
-
-## Garage Management
-
-The Garage tab reads every garage from the active save and keeps the loaded
-profile and save visible in the overview. Compact status cards, separate city
-and garage-ID searches, ownership, size, headquarters and occupancy filters,
-and persistent sorting keep the garage list navigable.
-
-Garage details open in one keyboard-accessible modal with collapsible driver,
-truck and trailer assignments. Purchase, size and headquarters changes use a
-shared action-dialog layout with operation-specific loading text, inline error
-details, automatic list refresh and a highlighted result card.
-
-For ETS2 saves, the tool can purchase an existing unowned garage directly as a
-five-slot large garage, change an owned garage between three and five slots,
-purchase all currently unowned garages in one operation, and set an owned
-garage as headquarters. An empty owned garage can be relinquished when it is
-not the headquarters and no other save unit references it. Purchasing a small
-garage remains disabled until its save structure is confirmed independently.
-Downsizing is allowed only when the removed slots contain no truck or driver
-references. Each write checks the loaded save hash, creates an automatic backup,
-preserves unknown fields and existing assignments, replaces game.sii atomically,
-and verifies the resulting save after reading it again. A bulk purchase creates
-one backup and performs one atomic write; if every garage is already owned, the
-save is left unchanged.
-
-Garage purchase, upgrade, and relinquishment do not apply a financial transaction because no
-unambiguous money/cost link was established in the supported save structure.
-Garage purchase does not create trucks, drivers, or trailers. The AI driver
-manager can hire one or more existing recruitment candidates, optionally assign
-available company trucks, change or remove truck assignments, and remove one or
-more idle drivers. Drivers with an active job cannot be removed. Every driver
-mutation uses the same backup, atomic-write, save-hash, reload, and rollback
-safeguards as garage mutations. Garage and AI-driver writes for ATS remain
-unsupported.
-
-### Manual garage save verification
-
-Never run this procedure against the only copy of a profile. Exit ETS2 first,
-use the existing profile-clone workflow to create a separate ETS2 test profile,
-and create a dedicated manual save in that profile. Keep an additional
-filesystem copy of the complete test profile outside the ETS2 profile directory.
-Do not enable ATS writes and do not commit the copied profile or its save files.
-
-Before the first mutation, record the selected save name, the tool's reported
-save hash, and the counts of `vehicle`, `driver_ai`, `driver_player`, and
-`trailer` units in a decrypted inspection copy of `game.sii`. Select three
-unowned garages A, B, and C, one empty three-slot garage, one empty five-slot
-garage, and one five-slot garage with an assignment in slot 3 or 4.
-
-| Test | Procedure | Required result |
-| --- | --- | --- |
-| Purchase 1 | Purchase unowned garage A | A has status 3 and five empty truck and driver slots |
-| Purchase 2 | Purchase B immediately, without reopening the app, profile, save, or modal | A and B are owned |
-| Purchase 3 | Purchase C immediately | A, B, and C are owned |
-| Purchase all | Start from a copy where A, B, and C are unowned, then purchase all garages | Every unowned garage is owned, the HQ and existing assignments are unchanged, and one backup is reported |
-| Purchase all no-op | Run purchase all again | No save change or backup is made and the tool reports that all garages are already owned |
-| Relinquish | Sell an empty owned garage that is not the HQ | The garage has status 0, zero vehicle/driver/trailer slots, productivity 0, and its profit log reference is retained |
-| Blocked relinquish | Try to sell the HQ or a garage with a truck, driver, trailer, or external garage reference | The command is rejected and the save hash does not change |
-| Upgrade | Change an owned three-slot garage from 3 to 5 | Status is 3 and slots 0 through 4 exist |
-| Safe downgrade | Change an empty five-slot garage from 5 to 3 | Status is 2 and only slots 0 through 2 remain |
-| Blocked downgrade | Try to downsize a garage with a truck or driver in slot 3 or 4 | The command is rejected and the save hash does not change |
-| Headquarters | Change headquarters to another owned garage | Exactly one garage is HQ and the old HQ stays owned |
-| Generate drivers | Generate multiple drivers for an owned garage, once without trucks and once with available trucks | Hired-driver arrays remain parallel, candidates leave the offer/pool lists, and each new driver occupies one garage slot |
-| Truck assignment | Assign, change, and unassign a company truck for an idle driver | The truck reference moves between garage slots without duplication; unassignment is rejected if no empty storage slot exists |
-| Remove drivers | Remove one idle driver and then multiple idle drivers | Driver references leave the hired and garage lists, return to the driver pool, and assigned trucks remain in their garage slots |
-| Block active removal | Try to remove a driver with an active job | The command is rejected and the save hash does not change |
-| Restart | Close and reopen the tool, then reload the copied save | All preceding changes remain visible |
-| ETS2 load | Start ETS2 with the copied test profile | The profile and dedicated save load without an error |
-| In-game check | Inspect A, B, C, their sizes, and headquarters | The game state matches the tool and inspected save |
-
-Inspect these structures in the decrypted before/after copies of `game.sii`:
-
-- The `economy` block must keep the same `garages` count, indices, order, and
-  garage references.
-- A purchase changes only the existing target `garage : garage.<city>` block
-  from `status: 0`, `vehicles: 0`, and `drivers: 0` to `status: 3` with exactly
-  `vehicles[0..4]: null` and `drivers[0..4]: null`.
-- An upgrade changes `status: 2` to `status: 3`, changes both slot counts from
-  3 to 5, preserves indices 0 through 2, and adds null entries 3 and 4.
-- A safe downgrade changes `status: 3` to `status: 2`, changes both slot counts
-  from 5 to 3, and removes only empty entries 3 and 4.
-- The target garage's `trailers`, `productivity`, existing truck and driver
-  references, and unknown fields must remain unchanged. Until the observed
-  replacement `profit_log` block and its Unit-ID allocation are confirmed, the
-  existing `profit_log` reference is reused only when it resolves uniquely to
-  an existing `profit_log` block; otherwise the purchase is rejected.
-- Headquarters changes only the active player's `hq_city` value. The old and
-  new garage blocks, including ownership, capacity, trucks, drivers, and
-  trailers, must otherwise remain unchanged.
-- All unrelated garage blocks and all non-target units must remain unchanged.
-  The total counts of `vehicle`, `driver_ai`, `driver_player`, and `trailer`
-  units must match the before copy after every garage action.
-- After every successful action, confirm that a new automatic backup exists and
-  that the freshly reported save hash matches a new backend reload.
-- After every driver action, confirm that `player.drivers`, `driver_flags`,
-  `driver_readiness_timer`, and `driver_undrivable_truck_timers` have identical
-  counts and contiguous indices. Hired drivers must occur in exactly one garage
-  driver slot and in neither `drivers_offer` nor `driver_pool`.
-
-If post-write verification fails, stop the test. Confirm that the automatic
-rollback restored the original hash and garage state before performing another
-action.
-
-
-## Trailer Change on the Road
-
-The save editor includes a trailer switch workflow for the active save.
-
-- Reads the active trailer from player assignment data.
-- Lists owned trailers from the loaded save.
-- Previews the selected trailer switch before writing.
-- Supports an optional backup before applying the change.
-- Re-reads the save and verifies the active trailer after writing.
-
-For Android development, run:
-cargo tauri android dev
-
-## Troubleshooting
-
-### Linux (KDE Plasma / Wayland)
-
-If the app window is blank on Wayland, run with:
-
-```sh
-GDK_BACKEND=x11 WEBKIT_DISABLE_DMABUF_RENDERER=1 cargo tauri dev
+### Linux (Native Desktop Binary)
+Make sure standard GUI/X11/Wayland and GTK3 dialog headers are installed (e.g. `libgtk-3-dev` on Ubuntu/Debian/Codespaces):
+```bash
+./start.sh
+```
+Or build only:
+```bash
+./build-linux.sh
+# Binary: ets2-tool/src-tauri/target/release/ets2-tool
 ```
 
-You can prefix the same environment variables to the app launch command outside of dev as well.
-
-## Local Authentication (Career Mode)
-
-This project includes a local/offline authentication system for the Career panel (SQLite + Argon2 password hashing).
-
-### Test user (dev)
-
-- Email: `admin@admin.de`
-- Password: `admin123`
-- Role: `admin`
-
-The admin user is created/seeded automatically on first auth DB access and the password is stored only as a hash (never plaintext).
-
-### Where login data is stored
-
-**Database file**
-- Path: `%LOCALAPPDATA%\\SimNexusHub\\logbook.sqlite` (Windows)
-- Created automatically if missing.
-- Fallback: if `dirs::data_local_dir()` is unavailable, the current working directory is used.
-
-**Session file (remember-me token)**
-- Path: `%LOCALAPPDATA%\\SimNexusHub\\auth_session.json`
-- Contains only a persisted session token for “remember me” (no password, no email).
-
-Source of truth for paths:
-- `src-tauri/src/features/auth/db.rs`
-
-### SQLite schema (auth-related)
-
-Tables are created/updated automatically via “ensure tables/columns” (lightweight migrations):
-- `src-tauri/src/features/auth/db.rs`
-
-```sql
--- users
-CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  username TEXT NOT NULL,
-  email TEXT NOT NULL,
-  password_hash TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'user',
-  company_id INTEGER,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  last_login_at TEXT,
-  consent_at TEXT NOT NULL,
-  is_active INTEGER NOT NULL DEFAULT 1,
-  is_seed INTEGER NOT NULL DEFAULT 0
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);
-
--- sessions (remember-me)
-CREATE TABLE IF NOT EXISTS sessions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  token TEXT,
-  created_at TEXT NOT NULL,
-  expires_at TEXT,
-  last_used_at TEXT,
-  revoked_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
-
--- recovery codes (hashed, one-time)
-CREATE TABLE IF NOT EXISTS recovery_codes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  code_hash TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  used_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_recovery_codes_user_id ON recovery_codes(user_id);
-
--- login events (privacy-friendly local MAU per installation)
-CREATE TABLE IF NOT EXISTS login_events (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER,
-  at_utc TEXT NOT NULL,
-  year_month TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_login_events_year_month ON login_events(year_month);
-CREATE INDEX IF NOT EXISTS idx_login_events_user_month ON login_events(user_id, year_month);
+### Cross-Compiling the Windows `.exe` from Linux
+Install `mingw-w64` (`sudo apt install mingw-w64` or `sudo pacman -S mingw-w64-gcc`) and run:
+```bash
+./build-windows-from-linux.sh
+# Binary: ets2-tool/src-tauri/target/x86_64-pc-windows-gnu/release/ets2-tool.exe
 ```
 
-### What is stored / what is NOT stored (privacy)
+### Windows (Native `.exe`)
+Run `start.bat` or compile with Cargo:
+```powershell
+cd ets2-tool\src-tauri
+cargo run --release
+```
 
-Stored (minimum needed for local auth):
-- Email + username (for login + display)
-- Role (admin/user)
-- Password hash (Argon2, salted) in `users.password_hash`
-- Session token for “remember me” in `sessions.token` and `auth_session.json`
-- Timestamps: `created_at`, `updated_at`, `last_login_at`, session timestamps
+## License
 
-Not stored:
-- No plaintext passwords
-- No IP address, device fingerprint, geo location, or tracking identifiers
-- No telemetry / online user tracking (local-only)
-
-This is a technical, data-minimizing structure and **not legal advice**. For production, you likely want to add:
-- Server-side auth (if you need global MAU), email delivery, and secure token flows
-- Proper audit/event model, rate limiting, lockouts, and encrypted backups
-- Optional database encryption at rest (depending on threat model)
-
-### How login/logout works (technical)
-
-Backend:
-- Login/register: `src-tauri/src/features/auth/service.rs` (`login_local`, `register_local`)
-- Password hashing: Argon2 in `src-tauri/src/features/auth/service.rs` (`hash_password`, `verify_password`)
-- Session persistence: remember-me token written to `auth_session.json` and stored in `sessions`
-- Logout: clears in-memory state + removes `auth_session.json` + revokes the session row (sets `revoked_at`)
-
-Frontend:
-- Header user menu + login/logout: `src/main.js`
-- Career auth gate modal: `src/index.html` + `src/styles.css`
-- State refresh: on startup `auth_restore_session` is called, then UI fetches `auth_get_current_user`
-
-### Admin / Database view (local)
-
-If you are logged in as `admin`, the header user menu shows **Admin / DB**.
-- It displays: user id, email, role, created-at, last login, and whether an active session exists.
-- It does **not** display any password or password hash.
-
-## ETS2 Dispatcher Post-Write Validation
-
-The ETS2 dispatcher write flow validates the written `game.sii` immediately after the file is updated.
-
-- Validator source: `src-tauri/src/features/ets2save/post_write_validator.rs`
-- Trigger point: `src-tauri/src/features/ets2save/injector.rs`
-- UI output: Career Mode dispatcher detail panel, `Last Write Output`
-
-The validator checks the full pointer chain:
-
-1. `company.volatile.<company>.<city>` block exists
-2. expected `job_offer[i]` pointer still exists in that company block
-3. matching `job_offer_data : _nameless.*` block exists
-4. written fields match the expected dispatcher payload:
-   `cargo`, `target`, `shortest_distance_km`, `expiration_time`
-
-Result interpretation:
-
-- `post_write_valid = true`
-  The write is structurally valid. If ETS2 still does not show the job, the remaining cause is ETS2 load/cache state. Load the exact quicksave that was written.
-- `post_write_valid = false`
-  The write is not valid for the expected depot/job chain. Use `validation.rootCause` and `validation.validationErrorCode` from the write output.
-
-Root-cause mapping:
-
-- `wrong_depot`: expected company block was not found after write
-- `wrong_slot`: expected `job_offer` pointer is missing from the company block
-- `write_corrupt`: `job_offer_data` block is missing for the selected pointer
-- `cargo_mismatch`: written cargo token does not match the expected token
-- `target_mismatch`: written target company does not match the expected target
-
-The write output also includes an offer-slot scan so the selected `job_offer[i]` can be inspected when a depot contains multiple offer pointers.
+MIT License — see [LICENSE](LICENSE).

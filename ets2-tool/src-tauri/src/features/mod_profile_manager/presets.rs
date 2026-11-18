@@ -1,8 +1,8 @@
 use super::models::{GameType, ManualWorkshopPath, ModPreset, ModProfileManagerSettings};
 use std::fs;
 use std::path::PathBuf;
-use tauri::{AppHandle, Manager};
-use tauri_plugin_dialog::DialogExt;
+use crate::tauri::{AppHandle, Manager};
+use crate::tauri_plugin_dialog::DialogExt;
 use uuid::Uuid;
 
 const STORAGE_FOLDER: &str = "save-edit-tool/mod_profile_manager";
@@ -218,7 +218,7 @@ fn storage_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn file_path_to_path_buf(path: tauri_plugin_dialog::FilePath) -> Result<PathBuf, String> {
+fn file_path_to_path_buf(path: crate::tauri_plugin_dialog::FilePath) -> Result<PathBuf, String> {
     path.into_path()
         .map_err(|_| "The selected path could not be resolved.".to_string())
 }

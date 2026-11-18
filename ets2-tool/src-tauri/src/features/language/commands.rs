@@ -3,9 +3,9 @@ use super::translator::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tauri::{AppHandle, Runtime};
+use crate::tauri::{AppHandle, Runtime};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LanguageInfo {
     pub code: String,
     pub name: String,
@@ -21,8 +21,6 @@ fn language_name_registry() -> HashMap<&'static str, &'static str> {
         ("pl", "Polski"),
     ])
 }
-
-#[tauri::command]
 pub fn get_available_languages_command<R: Runtime>(app: AppHandle<R>) -> Vec<LanguageInfo> {
     if let Err(error) = ensure_translator_initialized(&app) {
         crate::dev_log!(
@@ -50,8 +48,6 @@ pub fn get_available_languages_command<R: Runtime>(app: AppHandle<R>) -> Vec<Lan
     language_infos.sort_by(|left, right| left.code.cmp(&right.code));
     language_infos
 }
-
-#[tauri::command]
 pub fn get_current_language_command<R: Runtime>(app: AppHandle<R>) -> String {
     if let Err(error) = ensure_translator_initialized(&app) {
         crate::dev_log!(
@@ -62,8 +58,6 @@ pub fn get_current_language_command<R: Runtime>(app: AppHandle<R>) -> String {
 
     get_current_language()
 }
-
-#[tauri::command]
 pub fn set_language_command<R: Runtime>(
     app: AppHandle<R>,
     language: String,
@@ -73,8 +67,6 @@ pub fn set_language_command<R: Runtime>(
 
     Ok(t("toasts.language_updated"))
 }
-
-#[tauri::command]
 pub fn translate_command<R: Runtime>(app: AppHandle<R>, key: String) -> String {
     if let Err(error) = ensure_translator_initialized(&app) {
         crate::dev_log!("[language] translate_command init failed: {}", error);

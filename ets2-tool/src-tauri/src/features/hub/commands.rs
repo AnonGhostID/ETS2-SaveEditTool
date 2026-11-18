@@ -1,11 +1,8 @@
-use tauri::command;
-use tauri::{AppHandle, Emitter, State};
+use crate::tauri::{AppHandle, Emitter, State};
 
 use crate::features::hub::config;
 use crate::features::hub::events::ModeChanged;
 use crate::state::{AppMode, HubState};
-
-#[command]
 pub fn hub_get_mode(hub: State<'_, HubState>) -> Result<AppMode, String> {
     let mode = *hub
         .mode
@@ -13,8 +10,6 @@ pub fn hub_get_mode(hub: State<'_, HubState>) -> Result<AppMode, String> {
         .map_err(|_| "HubState mode lock poisoned".to_string())?;
     Ok(mode)
 }
-
-#[command]
 pub fn hub_set_mode(
     mode: AppMode,
     app: AppHandle,

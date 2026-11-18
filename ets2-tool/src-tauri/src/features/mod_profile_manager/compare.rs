@@ -5,7 +5,7 @@ use super::models::{
 };
 use super::presets;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use tauri::AppHandle;
+use crate::tauri::AppHandle;
 
 pub fn compare_preset(
     app: &AppHandle,

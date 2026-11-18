@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::RwLock;
-use tauri::path::BaseDirectory;
-use tauri::{AppHandle, Manager, Runtime};
+use crate::tauri::path::BaseDirectory;
+use crate::tauri::{AppHandle, Manager, Runtime};
 
 static TRANSLATOR: Lazy<RwLock<Translator>> = Lazy::new(|| RwLock::new(Translator::new()));
 

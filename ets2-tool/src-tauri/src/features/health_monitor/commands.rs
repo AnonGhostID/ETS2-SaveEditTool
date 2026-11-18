@@ -1,4 +1,4 @@
-use tauri::{State, command};
+use crate::tauri::{State};
 
 use crate::features::logging::service as logging_service;
 use crate::shared::current_profile::snapshot_resolved_save_context;
@@ -7,8 +7,6 @@ use crate::state::{AppProfileState, DecryptCache, ProfileCache};
 
 use super::models::{SaveHealthFixResultDto, SaveHealthReportDto};
 use super::service;
-
-#[command]
 pub async fn get_active_save_health(
     profile_state: State<'_, AppProfileState>,
     decrypt_cache: State<'_, DecryptCache>,
@@ -28,7 +26,7 @@ pub async fn get_active_save_health(
         .map_err(|error| format!("Failed to resolve active save context: {}", error))?;
     let decrypt_cache = decrypt_cache.inner().clone();
     let worker_context = context.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
+    let result = crate::tauri::async_runtime::spawn_blocking(move || {
         service::analyze_resolved_save_health(
             worker_context,
             resolved,
@@ -68,8 +66,6 @@ pub async fn get_active_save_health(
     }
     result
 }
-
-#[command]
 pub fn apply_save_health_fix(
     fix_id: String,
     confirmed: bool,

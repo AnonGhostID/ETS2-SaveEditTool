@@ -4,7 +4,7 @@ use std::path::Path;
 use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use crate::tauri::{AppHandle, Emitter};
 
 use crate::events::{EVT_DATA_IMPORT_DONE, EVT_DATA_IMPORT_ERROR, EVT_DATA_IMPORT_PROGRESS};
 use crate::shared::ets2data::fuzzy::{FuzzyDisposition, fuzzy_disposition, levenshtein_similarity};

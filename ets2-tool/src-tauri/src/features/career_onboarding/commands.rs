@@ -1,14 +1,10 @@
 use rusqlite::Connection;
-use tauri::State;
-use tauri::command;
-
+use crate::tauri::State;
 use crate::features::auth::db as auth_db;
 use crate::features::auth::service as auth_service;
 use crate::features::career_onboarding::service::{self, CareerOnboardingState};
 use crate::features::companies::db as company_db;
 use crate::state::AuthState;
-
-#[command]
 pub fn career_get_onboarding_state(
     auth: State<'_, AuthState>,
 ) -> Result<CareerOnboardingState, String> {

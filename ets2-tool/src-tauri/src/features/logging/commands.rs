@@ -1,11 +1,9 @@
-use tauri::{AppHandle, State, command};
+use crate::tauri::{AppHandle, State};
 
 use crate::shared::user_log::{self, UserLogEntry, UserLogStatus};
 use crate::state::AppProfileState;
 
 use super::service;
-
-#[command]
 pub fn log_user_action(
     action: String,
     stage: String,
@@ -53,8 +51,6 @@ pub fn log_user_action(
 
     Ok(format!("Logged action '{}' with stage '{}'", action, stage))
 }
-
-#[command]
 pub fn log_diagnostics_event(
     event: String,
     detail: Option<String>,
@@ -98,39 +94,27 @@ pub fn log_diagnostics_event(
 
     Ok("ok".to_string())
 }
-
-#[command]
 pub fn get_user_logs(
     level_filter: Option<String>,
     max_lines: Option<u32>,
 ) -> Result<Vec<UserLogEntry>, String> {
     service::get_user_logs(level_filter, max_lines)
 }
-
-#[command]
 pub fn export_user_logs(
     app: AppHandle,
     profile_state: State<'_, AppProfileState>,
 ) -> Result<String, String> {
     service::export_user_logs(&app, profile_state.inner())
 }
-
-#[command]
 pub fn clear_user_logs() -> Result<Option<String>, String> {
     service::clear_user_logs()
 }
-
-#[command]
 pub fn get_log_status() -> Result<UserLogStatus, String> {
     service::get_log_status()
 }
-
-#[command]
 pub fn build_support_report(profile_state: State<'_, AppProfileState>) -> Result<String, String> {
     service::build_support_report(profile_state.inner())
 }
-
-#[command]
 pub fn export_logs_bundle(
     app: AppHandle,
     profile_state: State<'_, AppProfileState>,

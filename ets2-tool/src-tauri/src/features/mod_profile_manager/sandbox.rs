@@ -17,7 +17,7 @@ use crate::state::{AppProfileState, DecryptCache, ProfileCache};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
+use crate::tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
 const STORAGE_FOLDER: &str = "save-edit-tool/mod_profile_manager";

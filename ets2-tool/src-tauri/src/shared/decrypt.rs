@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Duration;
-use tauri::State;
+use crate::tauri::State;
 
 const SIG_PLAINTEXT_SII: u32 = 1315531091;
 const SIG_ENCRYPTED_AES: u32 = 1131635539;

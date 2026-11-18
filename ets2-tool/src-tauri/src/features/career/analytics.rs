@@ -7,8 +7,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use tauri::AppHandle;
-use tauri_plugin_dialog::DialogExt;
+use crate::tauri::AppHandle;
+use crate::tauri_plugin_dialog::DialogExt;
 
 use crate::features::ets2save::dispatcher as save_dispatcher;
 use crate::shared::decrypt::decrypt_if_needed;

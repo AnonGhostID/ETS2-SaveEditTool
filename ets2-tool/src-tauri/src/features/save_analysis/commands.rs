@@ -7,7 +7,7 @@ use crate::state::{AppProfileState, DecryptCache};
 use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{AppHandle, State};
+use crate::tauri::{AppHandle, State};
 
 static MOD_ANALYSIS_RUNNING: AtomicBool = AtomicBool::new(false);
 
@@ -20,8 +20,6 @@ fn panic_message(payload: Box<dyn Any + Send>) -> String {
     }
     "unknown panic payload".to_string()
 }
-
-#[tauri::command]
 pub async fn analyze_mod_conflict_diagnostics(
     profile_state: State<'_, AppProfileState>,
     decrypt_cache: State<'_, DecryptCache>,
@@ -50,7 +48,7 @@ pub async fn analyze_mod_conflict_diagnostics(
     };
     let decrypt_cache = decrypt_cache.inner().clone();
 
-    let result = match tauri::async_runtime::spawn_blocking(move || {
+    let result = match crate::tauri::async_runtime::spawn_blocking(move || {
         catch_unwind(AssertUnwindSafe(|| {
             service::analyze_mod_conflict_diagnostics_from_snapshot(
                 selected_game,
@@ -108,8 +106,6 @@ pub async fn analyze_mod_conflict_diagnostics(
     }
     result
 }
-
-#[tauri::command]
 pub async fn analyze_mod_conflict_diagnostics_deep(
     profile_state: State<'_, AppProfileState>,
     decrypt_cache: State<'_, DecryptCache>,
@@ -138,7 +134,7 @@ pub async fn analyze_mod_conflict_diagnostics_deep(
     };
     let decrypt_cache = decrypt_cache.inner().clone();
 
-    let result = match tauri::async_runtime::spawn_blocking(move || {
+    let result = match crate::tauri::async_runtime::spawn_blocking(move || {
         catch_unwind(AssertUnwindSafe(|| {
             service::analyze_mod_conflict_diagnostics_from_snapshot(
                 selected_game,
@@ -186,8 +182,6 @@ pub async fn analyze_mod_conflict_diagnostics_deep(
     }
     result
 }
-
-#[tauri::command]
 pub fn export_mod_conflict_diagnostics_report(
     app: AppHandle,
     report: ModConflictAnalysisReport,

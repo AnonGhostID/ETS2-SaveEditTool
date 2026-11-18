@@ -8,15 +8,11 @@ use crate::state::{AppProfileState, DecryptCache, ProfileCache};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::PathBuf;
-use tauri::{AppHandle, Manager, State};
-use tauri_plugin_dialog::DialogExt;
-
-#[tauri::command]
+use crate::tauri::{AppHandle, Manager, State};
+use crate::tauri_plugin_dialog::DialogExt;
 pub fn get_ets2_data_location() -> Result<Ets2DataLocationDto, String> {
     Ok(ets2_data_location_dto())
 }
-
-#[tauri::command]
 pub fn choose_ets2_data_location(
     app: AppHandle,
     dialog_title: Option<String>,
@@ -45,8 +41,6 @@ pub fn choose_ets2_data_location(
     )?;
     Ok(Some(ets2_data_location_dto()))
 }
-
-#[tauri::command]
 pub fn set_ets2_data_location_mode(
     app: AppHandle,
     mode: String,
@@ -80,8 +74,6 @@ pub fn set_ets2_data_location_mode(
     Ok(ets2_data_location_dto())
     })
 }
-
-#[tauri::command]
 pub fn reset_ets2_data_location(
     app: AppHandle,
     profile_state: State<'_, AppProfileState>,
@@ -158,7 +150,7 @@ fn clear_profile_cache_files(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn file_path_to_string(path: tauri_plugin_dialog::FilePath) -> Result<String, String> {
+fn file_path_to_string(path: crate::tauri_plugin_dialog::FilePath) -> Result<String, String> {
     path.into_path()
         .map(|value| value.display().to_string())
         .map_err(|_| "The selected dialog path could not be read.".to_string())

@@ -2,9 +2,6 @@ use crate::features::language::translator::t;
 use crate::features::profile_clone::logic as profile_clone;
 use crate::models::clone_profiles_info::{CloneOptions, CloneTargetStatus};
 use std::path::Path;
-use tauri::command;
-
-#[command]
 pub fn clone_profile_command(
     source_profile: String,
     new_name: String,
@@ -22,8 +19,6 @@ pub fn clone_profile_command(
         .map(|p| t("ui.clone_success").replace("{path}", &p.display().to_string()))
         .map_err(|e| e.to_string())
 }
-
-#[command]
 pub fn validate_clone_target(
     source_profile: String,
     new_name: String,

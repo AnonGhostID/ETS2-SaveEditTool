@@ -1,4 +1,4 @@
-use tauri::{State, command};
+use crate::tauri::{State};
 
 use crate::features::logging::service as logging_service;
 use crate::shared::current_profile::snapshot_resolved_save_context;
@@ -7,8 +7,6 @@ use crate::state::{AppProfileState, DecryptCache, ProfileCache};
 
 use super::models::{BackupRestorePreviewDto, BackupRestoreResultDto, BackupVersionDto};
 use super::service;
-
-#[command]
 pub async fn list_active_save_backups(
     profile_state: State<'_, AppProfileState>,
 ) -> Result<Vec<BackupVersionDto>, String> {
@@ -17,7 +15,7 @@ pub async fn list_active_save_backups(
     let save_session_id = snapshot_resolved_save_context(profile_state.inner())
         .ok()
         .and_then(|item| item.context.save_session_id);
-    let result = tauri::async_runtime::spawn_blocking(move || {
+    let result = crate::tauri::async_runtime::spawn_blocking(move || {
         service::list_backups_for_save_session(save_session_id)
     })
     .await
@@ -45,8 +43,6 @@ pub async fn list_active_save_backups(
     );
     result
 }
-
-#[command]
 pub fn preview_backup_restore(
     backup_id: String,
     profile_state: State<'_, AppProfileState>,
@@ -61,8 +57,6 @@ pub fn preview_backup_restore(
     );
     Ok(preview)
 }
-
-#[command]
 pub fn restore_backup(
     backup_id: String,
     confirmed: bool,

@@ -9,10 +9,9 @@ use crate::shared::trace::TraceScope;
 use crate::state::ProfileCache;
 use regex::Regex;
 use std::fs;
-use tauri::{State, command};
+use crate::tauri::{State};
 
 //* Liest die globale config.cfg im Basis-Verzeichnis des Spiels *//
-#[command]
 pub fn read_base_config(cache: State<'_, ProfileCache>) -> Result<BaseGameConfig, String> {
     let mut trace = TraceScope::new("read_base_config");
     dev_log!("Lese globale Config");
@@ -78,7 +77,6 @@ pub fn read_base_config(cache: State<'_, ProfileCache>) -> Result<BaseGameConfig
 
 // Hiermit wird die config.cfg im Basis-Ordner des Profils gelesen
 // (z.B. .../Euro Truck Simulator 2/profiles/12345/config.cfg)
-#[command]
 // Der Funktionskopf akzeptiert den Pfad direkt
 pub fn read_save_config(
     profile_path: &str,

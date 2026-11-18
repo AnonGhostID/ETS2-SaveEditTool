@@ -5,7 +5,7 @@ use chrono::Utc;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
-use tauri::{AppHandle, Emitter};
+use crate::tauri::{AppHandle, Emitter};
 
 use crate::features::ets2save::errors::{AppError, AppErrorCode};
 use crate::features::ets2save::parser::{SaveTemplateScan, scan_save_templates};

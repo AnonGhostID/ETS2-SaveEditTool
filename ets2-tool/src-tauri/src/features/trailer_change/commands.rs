@@ -1,4 +1,4 @@
-use tauri::{State, command};
+use crate::tauri::{State};
 
 use crate::state::{AppProfileState, DecryptCache, ProfileCache};
 
@@ -10,8 +10,6 @@ use super::service::{
     apply_active_trailer_switch_transaction, read_switch_list, read_switch_preview,
     read_trailer_change_session,
 };
-
-#[command]
 pub async fn list_owned_trailers_for_switch(
     save_path: Option<String>,
     profile_state: State<'_, AppProfileState>,
@@ -19,8 +17,6 @@ pub async fn list_owned_trailers_for_switch(
 ) -> Result<TrailerSwitchList, String> {
     read_switch_list(save_path, profile_state.inner(), decrypt_cache.inner())
 }
-
-#[command]
 pub async fn initialize_trailer_change_session(
     save_path: Option<String>,
     profile_state: State<'_, AppProfileState>,
@@ -34,8 +30,6 @@ pub async fn initialize_trailer_change_session(
         trailer_change_cache.inner(),
     )
 }
-
-#[command]
 pub async fn preview_active_trailer_switch(
     save_path: Option<String>,
     target_trailer_id: String,
@@ -51,16 +45,12 @@ pub async fn preview_active_trailer_switch(
         decrypt_cache.inner(),
     )
 }
-
-#[command]
 pub async fn log_trailer_change_frontend_event(
     event: String,
     detail: Option<String>,
 ) -> Result<(), String> {
     super::service::log_trailer_change_frontend_event(event, detail)
 }
-
-#[command]
 pub async fn apply_active_trailer_switch(
     save_path: Option<String>,
     target_trailer_id: String,

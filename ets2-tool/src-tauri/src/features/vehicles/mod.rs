@@ -9,8 +9,8 @@ use crate::state::{AppProfileState, DecryptCache};
 use std::path::Path;
 
 pub(crate) fn load_save_content(
-    profile_state: tauri::State<'_, AppProfileState>,
-    decrypt_cache: tauri::State<'_, DecryptCache>,
+    profile_state: crate::tauri::State<'_, AppProfileState>,
+    decrypt_cache: crate::tauri::State<'_, DecryptCache>,
 ) -> Result<(String, String), String> {
     let save_path = resolve_active_save_from_snapshot(
         profile_state.current_save.lock().unwrap().clone(),

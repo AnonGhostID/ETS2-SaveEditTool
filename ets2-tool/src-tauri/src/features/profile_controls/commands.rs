@@ -2,9 +2,6 @@ use crate::dev_log;
 use fs_extra::dir::copy;
 use std::fs;
 use std::path::Path;
-use tauri::command;
-
-#[command]
 pub fn copy_profile_controls(
     source_profile_path: String,
     target_profile_path: String,

@@ -8,8 +8,8 @@ use serde::Serialize;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
-use tauri_plugin_dialog::DialogExt;
+use crate::tauri::AppHandle;
+use crate::tauri_plugin_dialog::DialogExt;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

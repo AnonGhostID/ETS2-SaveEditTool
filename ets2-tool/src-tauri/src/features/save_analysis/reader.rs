@@ -8,9 +8,7 @@ use crate::state::{AppProfileState, DecryptCache, ProfileCache};
 use regex::Regex;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::State;
-use tauri::command;
-
+use crate::tauri::State;
 fn get_active_save_path_from_snapshot(
     current_save: Option<String>,
     current_profile: Option<String>,
@@ -68,8 +66,6 @@ fn get_active_save_path_from_snapshot(
 //         .and_then(|c| c[1].parse().ok())
 //         .unwrap_or(0))
 // }
-
-#[command]
 pub async fn read_all_save_data(
     profile_state: State<'_, AppProfileState>,
     cache: State<'_, ProfileCache>,
@@ -98,7 +94,7 @@ pub async fn read_all_save_data(
     dev_log!("Lese alle Speicherdaten aus: {:?}", path);
     let decrypt_cache = decrypt_cache.inner().clone();
     let path_for_worker = path.clone();
-    let data = tauri::async_runtime::spawn_blocking(move || {
+    let data = crate::tauri::async_runtime::spawn_blocking(move || {
         read_all_save_data_from_path(path_for_worker, &decrypt_cache)
     })
     .await
@@ -119,8 +115,6 @@ pub async fn read_all_save_data(
     trace.finish_ok();
     Ok(data)
 }
-
-#[command]
 pub fn read_traffic_value() -> Result<i64, String> {
     let path = ets2_base_config_path().ok_or("Globaler Config-Pfad nicht gefunden".to_string())?;
     let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;

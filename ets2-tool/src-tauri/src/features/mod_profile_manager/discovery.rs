@@ -15,7 +15,7 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::Path;
 use std::time::{Duration, Instant, UNIX_EPOCH};
-use tauri::AppHandle;
+use crate::tauri::AppHandle;
 use walkdir::WalkDir;
 use zip::ZipArchive;
 

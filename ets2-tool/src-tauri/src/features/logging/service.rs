@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use rusqlite::Connection;
-use tauri::AppHandle;
+use crate::tauri::AppHandle;
 
 use crate::db::sqlite;
 use crate::shared::current_profile::snapshot_resolved_save_context;

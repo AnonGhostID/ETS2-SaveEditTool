@@ -7,7 +7,7 @@ use rusqlite::{Connection as RusqliteConnection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, Sqlite, SqlitePool};
-use tauri::{AppHandle, Emitter};
+use crate::tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 use crate::events::{
@@ -2172,7 +2172,7 @@ mod tests {
 
     #[test]
     fn db_migrations_apply() {
-        tauri::async_runtime::block_on(async {
+        crate::tauri::async_runtime::block_on(async {
             let db_path =
                 std::env::temp_dir().join(format!("ets_job_links_{}.sqlite", uuid::Uuid::new_v4()));
             let pool = create_pool(&db_path).await.unwrap();
@@ -2214,7 +2214,7 @@ mod tests {
 
     #[test]
     fn host_selection_skips_offerless_depots() {
-        tauri::async_runtime::block_on(async {
+        crate::tauri::async_runtime::block_on(async {
             let db_path =
                 std::env::temp_dir().join(format!("ets_job_links_{}.sqlite", uuid::Uuid::new_v4()));
             let pool = create_pool(&db_path).await.unwrap();
@@ -2247,7 +2247,7 @@ mod tests {
 
     #[test]
     fn host_selection_returns_actionable_error_when_city_has_no_offers() {
-        tauri::async_runtime::block_on(async {
+        crate::tauri::async_runtime::block_on(async {
             let db_path =
                 std::env::temp_dir().join(format!("ets_job_links_{}.sqlite", uuid::Uuid::new_v4()));
             let pool = create_pool(&db_path).await.unwrap();

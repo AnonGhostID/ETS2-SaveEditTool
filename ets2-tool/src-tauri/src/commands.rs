@@ -1,5 +1,5 @@
 use rusqlite::Connection;
-use tauri::{AppHandle, State, command};
+use crate::tauri::{AppHandle, State};
 
 use crate::features::ets2save::errors::AppError;
 use crate::features::ets2save::link_service;
@@ -12,8 +12,6 @@ use crate::shared::ets2data::models::{
     CityQueryFilter, CityRecord, CompanyRecord, Ets2DataImportSummary,
 };
 use crate::state::{AppProfileState, AppState, CareerState, EtsDbState};
-
-#[command]
 pub async fn ets_get_last_quicksave(
     profile_id: String,
     profile_state: State<'_, AppProfileState>,
@@ -21,8 +19,6 @@ pub async fn ets_get_last_quicksave(
 ) -> Result<EtsSaveSlot, AppError> {
     link_service::ets_get_last_quicksave(&db.pool, &profile_id, profile_state.inner()).await
 }
-
-#[command]
 pub async fn ets_prepare_job_link(
     vtc_job_id: String,
     profile_id: String,
@@ -39,8 +35,6 @@ pub async fn ets_prepare_job_link(
     )
     .await
 }
-
-#[command]
 pub async fn ets_write_job_to_quicksave(
     link_id: String,
     app: AppHandle,
@@ -48,16 +42,12 @@ pub async fn ets_write_job_to_quicksave(
 ) -> Result<EtsJobWriteResult, AppError> {
     link_service::ets_write_job_to_quicksave(&app, &db.pool, &link_id).await
 }
-
-#[command]
 pub async fn ets_get_job_link_status(
     vtc_job_id: String,
     db: State<'_, EtsDbState>,
 ) -> Result<EtsJobLink, AppError> {
     link_service::ets_get_job_link_status(&db.pool, &vtc_job_id).await
 }
-
-#[command]
 pub async fn ets_snapshot_refresh_active_save(
     app: AppHandle,
     profile_state: State<'_, AppProfileState>,
@@ -94,8 +84,6 @@ pub async fn ets_snapshot_refresh_active_save(
             error
         })
 }
-
-#[command]
 pub async fn ets_snapshot_get_active(
     profile_state: State<'_, AppProfileState>,
     db: State<'_, EtsDbState>,
@@ -111,8 +99,6 @@ pub async fn ets_snapshot_get_active(
     };
     snapshot::snapshot_get_by_session(&db.pool, save_session_id).await
 }
-
-#[command]
 pub async fn ets_snapshot_list_depots(
     city_token: Option<String>,
     profile_state: State<'_, AppProfileState>,
@@ -132,8 +118,6 @@ pub async fn ets_snapshot_list_depots(
     })?;
     snapshot::snapshot_list_depots(&db.pool, &save_session_id, city_token.as_deref()).await
 }
-
-#[command]
 pub async fn ets_snapshot_get_active_diagnostics(
     profile_state: State<'_, AppProfileState>,
     db: State<'_, EtsDbState>,
@@ -149,15 +133,11 @@ pub async fn ets_snapshot_get_active_diagnostics(
     };
     snapshot::snapshot_diagnostics_by_session(&db.pool, save_session_id).await
 }
-
-#[command]
 pub async fn get_sqlite_info(
     app_state: State<'_, AppState>,
 ) -> Result<crate::db::sqlite::SqliteInfoDto, String> {
     crate::db::sqlite::get_sqlite_info(&app_state.sqlite).await
 }
-
-#[command]
 pub async fn get_sqlite_table_counts(
     profile_state: State<'_, AppProfileState>,
     app_state: State<'_, AppState>,
@@ -183,8 +163,6 @@ pub async fn get_sqlite_table_counts(
     );
     Ok(counts)
 }
-
-#[command]
 pub fn data_import_ets2_datasets(
     force: bool,
     app: AppHandle,
@@ -193,8 +171,6 @@ pub fn data_import_ets2_datasets(
     let mut conn = open_runtime_db(career.inner())?;
     import::import_datasets_with_error_event(&app, &mut conn, &ets2data::default_repo_root(), force)
 }
-
-#[command]
 pub fn ets2data_get_city(
     city_id: String,
     career: State<'_, CareerState>,
@@ -202,8 +178,6 @@ pub fn ets2data_get_city(
     let conn = open_runtime_db(career.inner())?;
     import::get_city(&conn, &city_id)
 }
-
-#[command]
 pub fn ets2data_get_company(
     company_id: String,
     career: State<'_, CareerState>,
@@ -211,8 +185,6 @@ pub fn ets2data_get_company(
     let conn = open_runtime_db(career.inner())?;
     import::get_company(&conn, &company_id)
 }
-
-#[command]
 pub fn ets2data_list_cities(
     filters: Option<CityQueryFilter>,
     career: State<'_, CareerState>,

@@ -1,8 +1,8 @@
 use super::models::ModConflictAnalysisReport;
 use std::fs;
 use std::path::PathBuf;
-use tauri::AppHandle;
-use tauri_plugin_dialog::DialogExt;
+use crate::tauri::AppHandle;
+use crate::tauri_plugin_dialog::DialogExt;
 
 pub fn export_report(
     app: &AppHandle,
@@ -415,7 +415,7 @@ pub fn build_pretty_report(report: &ModConflictAnalysisReport) -> String {
     out.join("\r\n")
 }
 
-fn file_path_to_path_buf(path: tauri_plugin_dialog::FilePath) -> Result<PathBuf, String> {
+fn file_path_to_path_buf(path: crate::tauri_plugin_dialog::FilePath) -> Result<PathBuf, String> {
     path.into_path()
         .map_err(|_| "The selected export path could not be resolved.".to_string())
 }

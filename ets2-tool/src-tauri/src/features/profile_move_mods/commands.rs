@@ -5,12 +5,9 @@ use crate::state::AppProfileState;
 use regex::Regex;
 use std::fs;
 use std::path::Path;
-use tauri::command;
-
-#[command]
 pub fn copy_mods_to_profile(
     target_profile_path: String,
-    profile_state: tauri::State<'_, AppProfileState>,
+    profile_state: crate::tauri::State<'_, AppProfileState>,
 ) -> Result<String, String> {
     // 1. Get current profile path (Source)
     let source_path_str = require_current_profile(profile_state)?;

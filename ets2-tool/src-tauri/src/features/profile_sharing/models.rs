@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileShareContext {
     pub selected_game: String,
@@ -14,7 +14,7 @@ pub struct ProfileShareContext {
     pub path_resolution_error: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileShareExportResult {
     pub profile_name: String,
@@ -24,7 +24,7 @@ pub struct ProfileShareExportResult {
     pub exported_files: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileShareImportPreview {
     pub archive_path: String,
@@ -39,7 +39,7 @@ pub struct ProfileShareImportPreview {
     pub profile_name_conflict: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileShareImportResult {
     pub profile_name: String,
@@ -49,7 +49,7 @@ pub struct ProfileShareImportResult {
     pub import_target_dir: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SharedProfileManifest {
     pub archive_format: String,
