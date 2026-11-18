@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 pub mod career_tab;
+pub mod coaches_tab;
 pub mod components;
 pub mod garages_tab;
 pub mod mods_tab;
@@ -14,6 +15,8 @@ use std::collections::VecDeque;
 use std::sync::mpsc::Receiver;
 
 use eframe::egui::{self, Color32, RichText};
+
+use crate::gui::components::UiExt;
 
 use crate::db::sqlite::{SqliteInfoDto, SqliteTableCountsDto};
 use crate::features::backup::models::{BackupRestorePreviewDto, BackupVersionDto};
@@ -44,9 +47,14 @@ use crate::features::save_analysis::models::ModConflictAnalysisReport;
 use crate::features::save_analysis::quicksave::{get_current_truck_summary, quicksave_game_info};
 use crate::features::save_analysis::reader::read_all_save_data;
 use crate::features::save_editor::coaches::CoachesSnapshot;
+use crate::features::career::commands::dispatcher_generate_jobs;
+use crate::features::health_monitor::commands::get_active_save_health;
 use crate::features::save_editor::commands::{
-    UndoStatusDto, get_undo_status, undo_last_save_change,
+    UndoStatusDto, discard_pending_changes, edit_skill_value, get_undo_status,
+    read_truck_xp, save_pending_changes, undo_last_save_change,
 };
+use crate::features::vehicles::editor::{refuel_player_truck, repair_player_truck};
+use crate::shared::save_session;
 use crate::features::settings::ets2_paths::get_ets2_data_location;
 use crate::features::settings::game_config::{read_base_config, read_save_config};
 use crate::features::trailer_change::models::{
@@ -81,6 +89,7 @@ pub enum WorkspaceTab {
     Vehicles,
     Garages,
     Career,
+    Coaches,
     Mods,
     ProfileTools,
     Settings,
@@ -118,6 +127,73 @@ pub enum ProfileToolsSubTab {
     BackupsAndRestore,
 }
 
+/// A transient notification shown top-right. Info toasts auto-dismiss
+/// after 5s, errors after 10s.
+#[derive(Debug, Clone)]
+pub struct Toast {
+    pub message: String,
+    pub is_error: bool,
+    pub created: std::time::Instant,
+}
+
+/// A one-shot background load: work runs on a plain OS thread and the
+/// result is picked up by polling `poll()` from the UI thread. While a
+/// load is running, `is_loading()` is true and the UI shows a spinner.
+pub struct BackgroundLoad<T> {
+    receiver: Option<std::sync::mpsc::Receiver<T>>,
+}
+
+impl<T> Default for BackgroundLoad<T> {
+    fn default() -> Self {
+        Self { receiver: None }
+    }
+}
+
+impl<T: Send + 'static> BackgroundLoad<T> {
+    pub fn is_loading(&self) -> bool {
+        self.receiver.is_some()
+    }
+
+    /// Start `work` on a background thread. Any previous load is dropped
+    /// (its result is discarded when it arrives).
+    pub fn start<F: FnOnce() -> T + Send + 'static>(&mut self, work: F) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(work());
+        });
+        self.receiver = Some(rx);
+    }
+
+    /// Pick up a finished result, if one arrived. Returns `None` while
+    /// the load is still running (or when no load is running).
+    pub fn poll(&mut self) -> Option<T> {
+        let receiver = self.receiver.as_ref()?;
+        match receiver.try_recv() {
+            Ok(value) => {
+                self.receiver = None;
+                Some(value)
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.receiver = None;
+                None
+            }
+        }
+    }
+}
+
+/// A top-bar action deferred by the unsaved-changes prompt. The prompt
+/// offers Save / Discard / Cancel; on Save or Discard the action runs.
+#[derive(Debug, Clone)]
+pub enum PendingTopBarAction {
+    SwitchSave(String),
+    SwitchProfile(String),
+    /// The game ComboBox mutates `selected_game` on click, so the prompt
+    /// keeps the previous value to restore on Cancel.
+    SwitchGame { new_game: String, old_game: String },
+    Reload,
+}
+
 pub struct Ets2NativeApp {
     pub app: AppHandle,
     pub event_rx: Receiver<NativeEvent>,
@@ -129,7 +205,10 @@ pub struct Ets2NativeApp {
     pub career_sub_tab: CareerSubTab,
     pub mods_sub_tab: ModsSubTab,
     pub profile_tools_sub_tab: ProfileToolsSubTab,
-    pub status_banner: Option<(String, bool)>,
+    pub toasts: VecDeque<Toast>,
+    /// A top-bar action (save/profile/game switch, Reload) waiting on the
+    /// unsaved-changes prompt. `Some` while the prompt is open.
+    pub unsaved_prompt: Option<PendingTopBarAction>,
 
     // Global Game / Profile / Save selection
     pub selected_game: String,
@@ -148,6 +227,9 @@ pub struct Ets2NativeApp {
     pub base_config: Option<BaseGameConfig>,
     pub save_config: Option<SaveGameConfig>,
     pub coaches_snapshot: Option<CoachesSnapshot>,
+    pub coaches_stop_search: String,
+    pub coaches_stop_filter: coaches_tab::CoachesStopFilter,
+    pub edit_bus_xp_input: i64,
 
     pub edit_money_input: i64,
     pub edit_xp_input: i64,
@@ -192,12 +274,24 @@ pub struct Ets2NativeApp {
     pub selected_engine_path: String,
     pub selected_transmission_path: String,
     pub powertrain_preview: Option<TruckPowertrainPreview>,
+    pub fleet_search: String,
+    pub fleet_truck_sort: vehicles_tab::FleetTruckSort,
+    pub fleet_truck_sort_asc: bool,
+    pub fleet_trailer_sort: vehicles_tab::FleetTrailerSort,
+    pub fleet_trailer_sort_asc: bool,
+    pub truck_switch_search: String,
+    pub trailer_switch_search: String,
 
     // Garages & AI Drivers State
     pub garage_list: Option<GarageListResult>,
     pub ai_driver_mgmt: Option<AiDriverManagementResult>,
     pub garage_filter_text: String,
     pub garage_only_owned: bool,
+    pub selected_garage_id: Option<String>,
+    pub garage_sort_key: garages_tab::GarageSortKey,
+    pub garage_sort_asc: bool,
+    pub garage_confirm: Option<garages_tab::GarageConfirm>,
+    pub garages_load: BackgroundLoad<garages_tab::GarageLoadResult>,
     pub generate_drivers_count: usize,
     pub generate_drivers_assign_trucks: bool,
     pub selected_garage_for_drivers: String,
@@ -212,6 +306,8 @@ pub struct Ets2NativeApp {
     pub active_dispatcher_jobs: Vec<DispatcherMarketJob>,
     pub selected_market_job_id: String,
     pub job_search_filter: String,
+    pub dispatcher_sort: career_tab::DispatcherSort,
+    pub dispatcher_sort_asc: bool,
     pub trip_log: Vec<TripSummary>,
     pub job_log: Vec<JobLogEntry>,
     pub job_stats: Option<JobStats>,
@@ -238,6 +334,8 @@ pub struct Ets2NativeApp {
     pub selected_sandbox_id: String,
     pub workshop_mod_input: String,
     pub conflict_report: Option<ModConflictAnalysisReport>,
+    pub mod_confirm: Option<mods_tab::ModConfirm>,
+    pub mods_scan_load: BackgroundLoad<Result<ModProfileManagerState, String>>,
 
     // Profile Tools & Safety State
     pub clone_new_name: String,
@@ -255,6 +353,8 @@ pub struct Ets2NativeApp {
     pub backups_list: Vec<BackupVersionDto>,
     pub selected_backup_id: String,
     pub backup_preview: Option<BackupRestorePreviewDto>,
+    /// Backup id waiting on the restore confirm dialog.
+    pub backup_confirm: Option<String>,
 
     // Settings & Diagnostics State
     pub data_location: Option<Ets2DataLocationDto>,
@@ -282,7 +382,8 @@ impl Ets2NativeApp {
             career_sub_tab: CareerSubTab::LiveTelemetry,
             mods_sub_tab: ModsSubTab::ModManager,
             profile_tools_sub_tab: ProfileToolsSubTab::CloneAndRename,
-            status_banner: None,
+            toasts: VecDeque::new(),
+            unsaved_prompt: None,
 
             selected_game: "ets2".to_string(),
             available_languages,
@@ -299,6 +400,9 @@ impl Ets2NativeApp {
             base_config: None,
             save_config: None,
             coaches_snapshot: None,
+            coaches_stop_search: String::new(),
+            coaches_stop_filter: coaches_tab::CoachesStopFilter::default(),
+            edit_bus_xp_input: 0,
 
             edit_money_input: 1_000_000,
             edit_xp_input: 50_000,
@@ -342,11 +446,23 @@ impl Ets2NativeApp {
             selected_engine_path: String::new(),
             selected_transmission_path: String::new(),
             powertrain_preview: None,
+            fleet_search: String::new(),
+            fleet_truck_sort: vehicles_tab::FleetTruckSort::default(),
+            fleet_truck_sort_asc: true,
+            fleet_trailer_sort: vehicles_tab::FleetTrailerSort::default(),
+            fleet_trailer_sort_asc: true,
+            truck_switch_search: String::new(),
+            trailer_switch_search: String::new(),
 
             garage_list: None,
             ai_driver_mgmt: None,
             garage_filter_text: String::new(),
             garage_only_owned: false,
+            selected_garage_id: None,
+            garage_sort_key: garages_tab::GarageSortKey::default(),
+            garage_sort_asc: true,
+            garage_confirm: None,
+            garages_load: BackgroundLoad::default(),
             generate_drivers_count: 3,
             generate_drivers_assign_trucks: true,
             selected_garage_for_drivers: String::new(),
@@ -360,6 +476,8 @@ impl Ets2NativeApp {
             active_dispatcher_jobs: Vec::new(),
             selected_market_job_id: String::new(),
             job_search_filter: String::new(),
+            dispatcher_sort: career_tab::DispatcherSort::default(),
+            dispatcher_sort_asc: false,
             trip_log: Vec::new(),
             job_log: Vec::new(),
             job_stats: None,
@@ -385,6 +503,8 @@ impl Ets2NativeApp {
             selected_sandbox_id: String::new(),
             workshop_mod_input: String::new(),
             conflict_report: None,
+            mod_confirm: None,
+            mods_scan_load: BackgroundLoad::default(),
 
             clone_new_name: String::new(),
             clone_backup: true,
@@ -401,6 +521,7 @@ impl Ets2NativeApp {
             backups_list: Vec::new(),
             selected_backup_id: String::new(),
             backup_preview: None,
+            backup_confirm: None,
 
             data_location: None,
             custom_homedir_input: String::new(),
@@ -421,7 +542,126 @@ impl Ets2NativeApp {
     }
 
     pub fn set_status(&mut self, message: impl Into<String>, is_error: bool) {
-        self.status_banner = Some((message.into(), is_error));
+        let message = message.into();
+        // Don't stack the same message twice in a row.
+        if let Some(last) = self.toasts.back() {
+            if last.message == message && last.is_error == is_error {
+                return;
+            }
+        }
+        self.toasts.push_back(Toast {
+            message,
+            is_error,
+            created: std::time::Instant::now(),
+        });
+        while self.toasts.len() > 4 {
+            self.toasts.pop_front();
+        }
+    }
+
+    /// Flush staged game.sii edits to disk (top-bar Save button).
+    pub fn flush_pending_changes(&mut self) {
+        match save_pending_changes(
+            self.profile_state(),
+            self.profile_cache(),
+            self.decrypt_cache(),
+        ) {
+            Ok(saved) => {
+                if saved.is_empty() {
+                    self.set_status("Nothing to save.", false);
+                } else {
+                    self.reload_active_save_data();
+                    self.set_status(format!("Saved {} file(s) to disk.", saved.len()), false);
+                }
+            }
+            Err(err) => self.set_status(format!("Save failed: {err}"), true),
+        }
+    }
+
+    /// Run a top-bar action that was deferred by the unsaved prompt.
+    fn perform_top_bar_action(&mut self, action: PendingTopBarAction) {
+        match action {
+            PendingTopBarAction::SwitchSave(save_path) => self.select_save(save_path),
+            PendingTopBarAction::SwitchProfile(profile_path) => {
+                self.select_profile(profile_path)
+            }
+            PendingTopBarAction::SwitchGame { new_game, .. } => {
+                self.selected_game = new_game;
+                self.selected_profile_path = None;
+                self.selected_save_path = None;
+                self.refresh_profiles_and_saves();
+            }
+            PendingTopBarAction::Reload => {
+                self.refresh_profiles_and_saves();
+                self.set_status("Profiles and active save reloaded.", false);
+            }
+        }
+    }
+
+    /// Resolve the unsaved-changes prompt: save or discard the staged
+    /// edits, then run the deferred action. If the save fails, the staged
+    /// edits are kept and the user stays put.
+    fn resolve_unsaved_prompt(&mut self, save_first: bool) {
+        let Some(action) = self.unsaved_prompt.take() else {
+            return;
+        };
+        if save_first {
+            self.flush_pending_changes();
+            if save_session::is_dirty() {
+                return;
+            }
+        } else {
+            let _ = discard_pending_changes(self.profile_cache(), self.decrypt_cache());
+            self.reload_active_save_data();
+        }
+        self.perform_top_bar_action(action);
+    }
+
+    /// Centered Save / Discard / Cancel prompt for the deferred top-bar
+    /// action. Rendered while `unsaved_prompt` is set.
+    fn render_unsaved_prompt(&mut self, ctx: &egui::Context) {
+        let Some(action) = self.unsaved_prompt.clone() else {
+            return;
+        };
+        let action_text = match &action {
+            PendingTopBarAction::SwitchSave(_) => "switching saves",
+            PendingTopBarAction::SwitchProfile(_) => "switching profiles",
+            PendingTopBarAction::SwitchGame { .. } => "switching games",
+            PendingTopBarAction::Reload => "reloading",
+        };
+        let dirty_count = save_session::dirty_paths().len();
+        let mut choice: Option<bool> = None; // Some(true) = save, Some(false) = discard
+        let mut cancelled = false;
+        egui::Window::new("Unsaved changes")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "You have unsaved edits in {} save file(s). Save them before {}?",
+                    dirty_count, action_text
+                ));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if components::primary_button(ui, "Save").clicked() {
+                        choice = Some(true);
+                    }
+                    if ui.button("Discard").clicked() {
+                        choice = Some(false);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancelled = true;
+                    }
+                });
+            });
+        if cancelled {
+            if let PendingTopBarAction::SwitchGame { old_game, .. } = &action {
+                self.selected_game = old_game.clone();
+            }
+            self.unsaved_prompt = None;
+        } else if let Some(save_first) = choice {
+            self.resolve_unsaved_prompt(save_first);
+        }
     }
 
     pub fn profile_state(&self) -> State<'_, AppProfileState> {
@@ -575,6 +815,15 @@ impl Ets2NativeApp {
             }
         }
 
+        // The XP editors start from the TRUE truck XP (game.sii), not
+        // the displayed total (info.sii = truck + bus): using the
+        // total as the truck XP would inflate the truck career by the
+        // bus amount on every apply. Fall back to the displayed value
+        // when the truck figure cannot be read.
+        if let Some(truck_xp) = read_truck_xp(self.profile_state()) {
+            self.edit_xp_input = truck_xp;
+        }
+
         if let Ok(qs) = async_runtime::block_on(quicksave_game_info(
             self.profile_state(),
             self.profile_cache(),
@@ -708,6 +957,7 @@ impl Ets2NativeApp {
                     .strong()
                     .color(theme::FAINT),
             );
+            let previous_game = self.selected_game.clone();
             let mut game_changed = false;
             egui::ComboBox::from_id_salt("game_selector")
                 .selected_text(self.selected_game.to_uppercase())
@@ -727,9 +977,16 @@ impl Ets2NativeApp {
                     }
                 });
             if game_changed {
-                self.selected_profile_path = None;
-                self.selected_save_path = None;
-                self.refresh_profiles_and_saves();
+                if save_session::is_dirty() {
+                    self.unsaved_prompt = Some(PendingTopBarAction::SwitchGame {
+                        new_game: self.selected_game.clone(),
+                        old_game: previous_game,
+                    });
+                } else {
+                    self.selected_profile_path = None;
+                    self.selected_save_path = None;
+                    self.refresh_profiles_and_saves();
+                }
             }
 
             // Profile Selector
@@ -769,7 +1026,14 @@ impl Ets2NativeApp {
                     }
                 });
             if let Some(profile_path) = newly_selected_profile {
-                self.select_profile(profile_path);
+                if save_session::is_dirty()
+                    && self.selected_profile_path.as_deref() != Some(profile_path.as_str())
+                {
+                    self.unsaved_prompt =
+                        Some(PendingTopBarAction::SwitchProfile(profile_path));
+                } else {
+                    self.select_profile(profile_path);
+                }
             }
 
             // Save Selector
@@ -813,20 +1077,33 @@ impl Ets2NativeApp {
                     }
                 });
             if let Some(save_path) = newly_selected_save {
-                self.select_save(save_path);
+                if save_session::is_dirty()
+                    && self.selected_save_path.as_deref() != Some(save_path.as_str())
+                {
+                    self.unsaved_prompt = Some(PendingTopBarAction::SwitchSave(save_path));
+                } else {
+                    self.select_save(save_path);
+                }
             }
 
             if ui.button("⟳ Reload").clicked() {
-                self.refresh_profiles_and_saves();
-                self.set_status("Profiles and active save reloaded.", false);
+                if save_session::is_dirty() {
+                    self.unsaved_prompt = Some(PendingTopBarAction::Reload);
+                } else {
+                    self.refresh_profiles_and_saves();
+                    self.set_status("Profiles and active save reloaded.", false);
+                }
             }
 
             // Undo Button
-            let can_undo = self
-                .undo_status
-                .as_ref()
-                .map(|u| u.can_undo)
-                .unwrap_or(false);
+            // Backup-based undo restores disk files, which staged edits
+            // would mask, so it stays disabled until Save or Discard.
+            let can_undo = !save_session::is_dirty()
+                && self
+                    .undo_status
+                    .as_ref()
+                    .map(|u| u.can_undo)
+                    .unwrap_or(false);
             if ui
                 .add_enabled(can_undo, egui::Button::new("↶ Undo"))
                 .clicked()
@@ -848,6 +1125,24 @@ impl Ets2NativeApp {
                     }
                     Err(err) => self.set_status(format!("Undo failed: {err}"), true),
                 }
+            }
+
+            // Explicit save: flush staged game.sii edits to disk.
+            let dirty = save_session::is_dirty();
+            if dirty {
+                ui.label(
+                    RichText::new("● Unsaved changes")
+                        .size(9.5)
+                        .strong()
+                        .color(theme::WARNING),
+                );
+            }
+            if ui
+                .add_enabled(dirty, egui::Button::new("Save"))
+                .on_hover_text("Write staged save edits to disk")
+                .clicked()
+            {
+                self.flush_pending_changes();
             }
 
             // Language Selector
@@ -885,40 +1180,104 @@ impl Ets2NativeApp {
     }
 
     fn render_sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(6.0);
+        // Flat navigation: every screen is one click away. The old
+        // in-tab sub-tab rows are gone; each sidebar entry selects its
+        // tab and sub-tab together.
+        let nav_height = (ui.available_height() - 46.0).max(100.0);
+        egui::ScrollArea::vertical()
+            .max_height(nav_height)
+            .show(ui, |ui| {
+                ui.add_space(6.0);
 
-        components::nav_section(ui, "WORKSPACE");
-        for (tab, label) in [
-            (WorkspaceTab::Launcher, "Dashboard"),
-            (WorkspaceTab::SaveEditor, "Save Editor"),
-            (WorkspaceTab::Vehicles, "Vehicles & Fleet"),
-            (WorkspaceTab::Garages, "Garages & Drivers"),
-        ] {
-            if components::nav_item(ui, label, self.active_tab == tab).clicked() {
-                self.active_tab = tab;
-            }
-        }
+                components::nav_section(ui, "WORKSPACE");
+                for (tab, label) in [
+                    (WorkspaceTab::Launcher, "Dashboard"),
+                    (WorkspaceTab::SaveEditor, "Save Editor"),
+                    (WorkspaceTab::Garages, "Garages & Drivers"),
+                ] {
+                    if components::nav_item(ui, label, self.active_tab == tab).clicked() {
+                        self.active_tab = tab;
+                    }
+                }
 
-        components::nav_section(ui, "CAREER");
-        if components::nav_item(ui, "Career & Dispatch", self.active_tab == WorkspaceTab::Career)
-            .clicked()
-        {
-            self.active_tab = WorkspaceTab::Career;
-        }
+                components::nav_section(ui, "VEHICLES");
+                for (sub, label) in [
+                    (VehiclesSubTab::PlayerVehicleEditor, "Vehicle Editor"),
+                    (VehiclesSubTab::TruckSwitcher, "Truck Switcher"),
+                    (VehiclesSubTab::TrailerSwitcher, "Trailer Switcher"),
+                    (VehiclesSubTab::PowertrainSwapper, "Powertrain"),
+                    (VehiclesSubTab::FleetInventory, "Fleet Inventory"),
+                ] {
+                    let selected =
+                        self.active_tab == WorkspaceTab::Vehicles && self.vehicles_sub_tab == sub;
+                    if components::nav_item(ui, label, selected).clicked() {
+                        self.active_tab = WorkspaceTab::Vehicles;
+                        self.vehicles_sub_tab = sub;
+                    }
+                }
 
-        components::nav_section(ui, "TOOLS");
-        for (tab, label) in [
-            (WorkspaceTab::Mods, "Mods & Conflicts"),
-            (WorkspaceTab::ProfileTools, "Profiles & Backups"),
-            (WorkspaceTab::Settings, "Settings"),
-        ] {
-            if components::nav_item(ui, label, self.active_tab == tab).clicked() {
-                self.active_tab = tab;
-            }
-        }
+                components::nav_section(ui, "CAREER");
+                for (sub, label) in [
+                    (CareerSubTab::LiveTelemetry, "Live Telemetry"),
+                    (CareerSubTab::Dispatcher, "Dispatcher"),
+                    (CareerSubTab::LogbookAndAnalytics, "Logbook & Analytics"),
+                    (CareerSubTab::VtcAndAccount, "VTC & Account"),
+                ] {
+                    let selected =
+                        self.active_tab == WorkspaceTab::Career && self.career_sub_tab == sub;
+                    if components::nav_item(ui, label, selected).clicked() {
+                        self.active_tab = WorkspaceTab::Career;
+                        self.career_sub_tab = sub;
+                    }
+                }
+                if components::nav_item(
+                    ui,
+                    "Coaches — Bus Career",
+                    self.active_tab == WorkspaceTab::Coaches,
+                )
+                .clicked()
+                {
+                    self.active_tab = WorkspaceTab::Coaches;
+                }
 
-        let remaining = (ui.available_height() - 46.0).max(8.0);
-        ui.add_space(remaining);
+                components::nav_section(ui, "LIBRARY");
+                for (sub, label) in [
+                    (ModsSubTab::ModManager, "Mod Manager"),
+                    (ModsSubTab::PresetsAndSandboxes, "Presets & Sandboxes"),
+                    (ModsSubTab::ConflictAnalyzer, "Conflict Analyzer"),
+                ] {
+                    let selected =
+                        self.active_tab == WorkspaceTab::Mods && self.mods_sub_tab == sub;
+                    if components::nav_item(ui, label, selected).clicked() {
+                        self.active_tab = WorkspaceTab::Mods;
+                        self.mods_sub_tab = sub;
+                    }
+                }
+
+                components::nav_section(ui, "SAFETY");
+                for (sub, label) in [
+                    (ProfileToolsSubTab::CloneAndRename, "Clone & Rename"),
+                    (ProfileToolsSubTab::ProfileSharing, "Profile Sharing"),
+                    (ProfileToolsSubTab::SaveHealth, "Save Health"),
+                    (ProfileToolsSubTab::BackupsAndRestore, "Backups & Restore"),
+                ] {
+                    let selected = self.active_tab == WorkspaceTab::ProfileTools
+                        && self.profile_tools_sub_tab == sub;
+                    if components::nav_item(ui, label, selected).clicked() {
+                        self.active_tab = WorkspaceTab::ProfileTools;
+                        self.profile_tools_sub_tab = sub;
+                    }
+                }
+
+                ui.add_space(10.0);
+                if components::nav_item(ui, "Settings", self.active_tab == WorkspaceTab::Settings)
+                    .clicked()
+                {
+                    self.active_tab = WorkspaceTab::Settings;
+                }
+                ui.add_space(6.0);
+            });
+
         ui.separator();
         ui.add_space(6.0);
         ui.label(
@@ -1009,53 +1368,251 @@ impl Ets2NativeApp {
 
         let money = self.save_data.as_ref().and_then(|d| d.money).unwrap_or(0);
         let xp = self.save_data.as_ref().and_then(|d| d.xp).unwrap_or(0);
+        let level = crate::xp::command::calculate_level(xp.max(0) as u64).level;
         let cities = self
             .save_data
             .as_ref()
             .and_then(|d| d.visited_cities)
             .unwrap_or(0);
+        let mut go_to: Option<WorkspaceTab> = None;
         ui.columns(4, |cols| {
-            components::stat_tile(
+            if components::clickable_stat_tile(
                 &mut cols[0],
                 "BALANCE",
                 &format!("€{money}"),
                 theme::ACCENT,
-            );
-            components::stat_tile(
+            ) {
+                go_to = Some(WorkspaceTab::SaveEditor);
+            }
+            if components::clickable_stat_tile(
                 &mut cols[1],
                 "EXPERIENCE",
                 &format!("{xp} XP"),
                 theme::TEXT,
-            );
-            components::stat_tile(
+            ) {
+                go_to = Some(WorkspaceTab::SaveEditor);
+            }
+            if components::clickable_stat_tile(
                 &mut cols[2],
                 "LEVEL",
-                &format!("{}", self.edit_level_input),
+                &format!("{level}"),
                 theme::SUCCESS,
-            );
-            components::stat_tile(
+            ) {
+                go_to = Some(WorkspaceTab::SaveEditor);
+            }
+            if components::clickable_stat_tile(
                 &mut cols[3],
                 "VISITED CITIES",
                 &format!("{cities}"),
                 theme::TEXT,
-            );
+            ) {
+                go_to = Some(WorkspaceTab::SaveEditor);
+            }
         });
-
-        if let Some(truck) = &self.current_truck_summary {
-            ui.add_space(8.0);
-            ui.label(
-                RichText::new(format!(
-                    "Current truck · {} · {} km",
-                    truck.display_name.as_deref().unwrap_or("Unknown"),
-                    truck.odometer_km.unwrap_or(0)
-                ))
-                .size(11.5)
-                .color(theme::MUTED),
-            );
+        ui.add_space(8.0);
+        let owned_garages = self
+            .garage_list
+            .as_ref()
+            .map(|list| list.diagnostics.owned_garage_count.to_string())
+            .unwrap_or_else(|| "—".to_string());
+        let driver_count = self
+            .ai_driver_mgmt
+            .as_ref()
+            .map(|mgmt| mgmt.drivers.len().to_string())
+            .unwrap_or_else(|| "—".to_string());
+        ui.columns(4, |cols| {
+            if components::clickable_stat_tile(
+                &mut cols[0],
+                "TRUCKS",
+                &self.all_trucks.len().to_string(),
+                theme::TEXT,
+            ) {
+                go_to = Some(WorkspaceTab::Vehicles);
+            }
+            if components::clickable_stat_tile(
+                &mut cols[1],
+                "TRAILERS",
+                &self.all_trailers.len().to_string(),
+                theme::TEXT,
+            ) {
+                go_to = Some(WorkspaceTab::Vehicles);
+            }
+            if components::clickable_stat_tile(
+                &mut cols[2],
+                "GARAGES OWNED",
+                &owned_garages,
+                theme::TEXT,
+            ) {
+                go_to = Some(WorkspaceTab::Garages);
+            }
+            if components::clickable_stat_tile(
+                &mut cols[3],
+                "AI DRIVERS",
+                &driver_count,
+                theme::TEXT,
+            ) {
+                go_to = Some(WorkspaceTab::Garages);
+            }
+        });
+        if let Some(tab) = go_to {
+            self.active_tab = tab;
+            if tab == WorkspaceTab::Vehicles {
+                self.vehicles_sub_tab = VehiclesSubTab::FleetInventory;
+            }
         }
 
+        // Current setup card: active truck, trailer, HQ garage.
+        ui.add_space(12.0);
+        ui.card(|ui| {
+            ui.heading("Current Setup");
+            if let Some(truck) = &self.player_truck {
+                let name = self
+                    .current_truck_summary
+                    .as_ref()
+                    .and_then(|s| s.display_name.clone())
+                    .unwrap_or_else(|| format!("{} {}", truck.brand, truck.model));
+                let plate = self
+                    .current_truck_summary
+                    .as_ref()
+                    .and_then(|s| s.cleaned_plate.clone())
+                    .unwrap_or_else(|| "-".to_string());
+                ui.label(format!(
+                    "Truck · {name} · Plate {plate} · {:.0} km",
+                    truck.odometer
+                ));
+                ui.horizontal(|ui| {
+                    ui.label("Fuel:");
+                    ui.add(
+                        egui::ProgressBar::new(truck.fuel_relative.clamp(0.0, 1.0))
+                            .desired_width(140.0)
+                            .text(format!("{:.0}%", truck.fuel_relative * 100.0)),
+                    );
+                    let worst_wear = truck
+                        .engine_wear
+                        .max(truck.transmission_wear)
+                        .max(truck.cabin_wear)
+                        .max(truck.chassis_wear);
+                    ui.label(format!("Worst wear: {:.0}%", worst_wear * 100.0));
+                });
+            } else if let Some(truck) = &self.current_truck_summary {
+                ui.label(format!(
+                    "Truck · {} · {} km",
+                    truck.display_name.as_deref().unwrap_or("Unknown"),
+                    truck.odometer_km.unwrap_or(0)
+                ));
+            } else {
+                ui.label("Truck · No save data loaded yet.");
+            }
+            match &self.player_trailer_result {
+                Some(res) if res.has_trailer => {
+                    if let Some(tr) = &res.trailer {
+                        ui.label(format!(
+                            "Trailer · {} · Plate {} · Cargo {:.0} kg",
+                            tr.body_type.as_deref().unwrap_or("Unknown"),
+                            tr.display_license_plate
+                                .as_deref()
+                                .or(tr.license_plate.as_deref())
+                                .unwrap_or("-"),
+                            tr.cargo_mass
+                        ));
+                    } else {
+                        ui.label("Trailer · Attached");
+                    }
+                }
+                _ => {
+                    ui.label("Trailer · None attached");
+                }
+            };
+            let hq = self
+                .garage_list
+                .as_ref()
+                .and_then(|list| list.headquarters_garage_id.as_deref())
+                .and_then(|hq| {
+                    self.garage_list
+                        .as_ref()
+                        .and_then(|list| list.garages.iter().find(|g| g.garage_id == hq))
+                        .map(|g| {
+                            g.city_name
+                                .clone()
+                                .or(g.city_token.clone())
+                                .unwrap_or_else(|| g.garage_id.clone())
+                        })
+                })
+                .unwrap_or_else(|| "—".to_string());
+            ui.label(format!("Headquarters · {hq}"));
+        });
+
+        // One-click operations (game.sii edits stage until Save).
         ui.add_space(18.0);
         components::section_label(ui, "QUICK ACTIONS");
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("Repair + Refuel Truck").clicked() {
+                let repaired = async_runtime::block_on(repair_player_truck(
+                    self.profile_state(),
+                    self.decrypt_cache(),
+                    self.profile_cache(),
+                ));
+                let refueled = async_runtime::block_on(refuel_player_truck(
+                    self.profile_state(),
+                    self.decrypt_cache(),
+                    self.profile_cache(),
+                ));
+                match (repaired, refueled) {
+                    (Ok(()), Ok(())) => {
+                        self.reload_active_save_data();
+                        self.set_status("Truck repaired and refueled.", false);
+                    }
+                    (Err(e), _) | (_, Err(e)) => {
+                        self.set_status(format!("Repair/refuel failed: {e}"), true)
+                    }
+                }
+            }
+            if ui.button("Max All Skills").clicked() {
+                for key in ["adr", "long_dist", "heavy", "fragile", "urgent", "mechanical"] {
+                    let _ = edit_skill_value(
+                        key.to_string(),
+                        6,
+                        self.profile_state(),
+                        self.profile_cache(),
+                        self.decrypt_cache(),
+                    );
+                }
+                self.skill_adr = 6;
+                self.skill_long_dist = 6;
+                self.skill_heavy = 6;
+                self.skill_fragile = 6;
+                self.skill_urgent = 6;
+                self.skill_mechanical = 6;
+                self.reload_active_save_data();
+                self.set_status("All 6 skills set to maximum (6).", false);
+            }
+            if ui.button("Scan Save Health").clicked() {
+                match async_runtime::block_on(get_active_save_health(
+                    self.profile_state(),
+                    self.decrypt_cache(),
+                )) {
+                    Ok(rep) => {
+                        self.save_health_report = Some(rep);
+                        self.active_tab = WorkspaceTab::ProfileTools;
+                        self.profile_tools_sub_tab = ProfileToolsSubTab::SaveHealth;
+                    }
+                    Err(e) => self.set_status(e, true),
+                }
+            }
+            if ui.button("Generate Market Jobs").clicked() {
+                match dispatcher_generate_jobs(self.career_state(), self.profile_state()) {
+                    Ok(st) => {
+                        self.dispatcher_gen_status = Some(st);
+                        self.set_status("Generated new freight market jobs.", false);
+                    }
+                    Err(e) => self.set_status(e, true),
+                }
+            }
+        });
+
+        ui.add_space(18.0);
+        components::section_label(ui, "OPEN A SCREEN");
         ui.add_space(8.0);
 
         ui.columns(2, |cols| {
@@ -1117,10 +1674,32 @@ impl Ets2NativeApp {
             }
         });
 
+        ui.add_space(18.0);
+        components::section_label(ui, "RECENT ACTIVITY");
+        ui.add_space(8.0);
+        if self.recent_events.is_empty() {
+            ui.label(
+                RichText::new("No recent activity yet.")
+                    .size(11.5)
+                    .color(theme::MUTED),
+            );
+        } else {
+            for (event, summary) in self.recent_events.iter().rev().take(5) {
+                ui.horizontal(|ui| {
+                    components::status_dot(ui, theme::ACCENT);
+                    ui.label(
+                        RichText::new(format!("{event} — {summary}"))
+                            .size(11.5)
+                            .color(theme::TEXT),
+                    );
+                });
+            }
+        }
+
         ui.add_space(14.0);
         ui.label(
             RichText::new(
-                "Every write creates a restorable backup. Undo is available in the command bar.",
+                "Edits stage in memory until you press Save in the top bar. Every save creates a restorable backup.",
             )
             .size(11.0)
             .color(theme::FAINT),
@@ -1143,33 +1722,53 @@ impl eframe::App for Ets2NativeApp {
                 self.render_top_bar(ui);
             });
 
-        if let Some((msg, is_error)) = self.status_banner.clone() {
-            egui::TopBottomPanel::bottom("native_status_bar")
-                .frame(
-                    egui::Frame::none()
-                        .fill(theme::SURFACE)
-                        .inner_margin(egui::Margin::symmetric(18.0, 7.0))
-                        .stroke(egui::Stroke::new(1.0, theme::BORDER)),
-                )
+        // Toasts: stacked top-right, auto-dismissing (5s info, 10s errors).
+        let now = std::time::Instant::now();
+        self.toasts.retain(|toast| {
+            let ttl_secs = if toast.is_error { 10 } else { 5 };
+            now.duration_since(toast.created).as_secs() < ttl_secs
+        });
+        if !self.toasts.is_empty() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(500));
+            let mut dismiss = None;
+            egui::Area::new("toasts".into())
+                .anchor(egui::Align2::RIGHT_TOP, [-12.0, 52.0])
                 .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        let color = if is_error {
-                            theme::DANGER
-                        } else {
-                            theme::SUCCESS
-                        };
-                        components::status_dot(ui, color);
-                        ui.label(RichText::new(&msg).size(12.0).color(theme::TEXT));
-                        ui.with_layout(
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                if ui.small_button("Dismiss").clicked() {
-                                    self.status_banner = None;
-                                }
-                            },
-                        );
+                    ui.vertical(|ui| {
+                        for (index, toast) in self.toasts.iter().enumerate() {
+                            egui::Frame::none()
+                                .fill(theme::SURFACE)
+                                .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                                .rounding(egui::Rounding::same(8.0))
+                                .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                                .show(ui, |ui| {
+                                    ui.set_max_width(340.0);
+                                    ui.horizontal(|ui| {
+                                        components::status_dot(
+                                            ui,
+                                            if toast.is_error {
+                                                theme::DANGER
+                                            } else {
+                                                theme::SUCCESS
+                                            },
+                                        );
+                                        ui.label(
+                                            RichText::new(&toast.message)
+                                                .size(12.0)
+                                                .color(theme::TEXT),
+                                        );
+                                        if ui.small_button("×").clicked() {
+                                            dismiss = Some(index);
+                                        }
+                                    });
+                                });
+                            ui.add_space(6.0);
+                        }
                     });
                 });
+            if let Some(index) = dismiss {
+                self.toasts.remove(index);
+            }
         }
 
         egui::SidePanel::left("native_sidebar")
@@ -1199,10 +1798,13 @@ impl eframe::App for Ets2NativeApp {
                         WorkspaceTab::Vehicles => vehicles_tab::render(self, ui),
                         WorkspaceTab::Garages => garages_tab::render(self, ui),
                         WorkspaceTab::Career => career_tab::render(self, ui, ctx),
+                        WorkspaceTab::Coaches => coaches_tab::render(self, ui),
                         WorkspaceTab::Mods => mods_tab::render(self, ui),
                         WorkspaceTab::ProfileTools => profile_tools_tab::render(self, ui),
                         WorkspaceTab::Settings => settings_tab::render(self, ui),
                     });
             });
+
+        self.render_unsaved_prompt(ctx);
     }
 }

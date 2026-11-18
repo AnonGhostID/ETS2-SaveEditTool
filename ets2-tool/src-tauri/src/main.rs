@@ -144,6 +144,11 @@ fn initialize_backend() -> AppHandle {
 }
 
 fn main() {
+    // Explicit save: game.sii edits are staged in memory until the user
+    // presses Save in the top bar. Tests and the data-builder binary
+    // never reach this entry point, so staging stays off for them.
+    crate::shared::save_session::set_staging_enabled(true);
+
     let app = initialize_backend();
     let app_for_shutdown = app.clone();
 

@@ -44,10 +44,67 @@ pub struct BusStop {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BusJobEntry {
+    pub id: String,
+    pub job_type: Option<String>,
+    pub assigned_bus: Option<String>,
+    pub source_stop: Option<String>,
+    pub target_stop: Option<String>,
+    pub stage_count: Option<i64>,
+    pub exp_delta: Option<i64>,
+    pub reward: Option<i64>,
+    pub travelled_distance: Option<f64>,
+    pub start_time: Option<i64>,
+    pub end_time: Option<i64>,
+    pub total_passengers: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BusJobLog {
     pub id: String,
     pub version: Option<String>,
     pub entries: Option<String>,
+    pub entries_detail: Vec<BusJobEntry>,
+}
+
+/// "bus_stop.city.helsinki" -> "Helsinki"; "bus_stop.viewpoints.pocbodo" -> "Pocbodo (viewpoint)".
+pub fn display_stop_name(id: &str) -> String {
+    let mut rest = id.strip_prefix("bus_stop.").unwrap_or(id);
+    rest = rest.strip_prefix("city.").unwrap_or(rest);
+    let viewpoint = rest.strip_prefix("viewpoints.");
+    let rest = viewpoint.unwrap_or(rest);
+    let mut name = title_case_words(rest);
+    if viewpoint.is_some() {
+        name.push_str(" (viewpoint)");
+    }
+    name
+}
+
+/// "vehicle.volvo.9700_23" -> "Volvo 9700 23".
+pub fn display_bus_name(id: &str) -> String {
+    let rest = id.strip_prefix("vehicle.").unwrap_or(id);
+    title_case_words(rest)
+}
+
+/// "city.wien" -> "Wien" (job entries store stops as "city.<name>").
+pub fn display_job_stop_name(raw: &str) -> String {
+    let rest = raw.strip_prefix("city.").unwrap_or(raw);
+    title_case_words(rest)
+}
+
+fn title_case_words(raw: &str) -> String {
+    raw.split(['_', '.', '-'])
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -67,6 +124,11 @@ pub struct CoachesSnapshot {
     pub my_vehicles_mode: Option<String>,
     pub assigned_vehicles_mode: Option<String>,
     pub job_logs: Vec<BusJobLog>,
+    pub total_bus_jobs: usize,
+    pub total_bus_exp: i64,
+    pub total_bus_reward: i64,
+    pub total_bus_distance: f64,
+    pub total_bus_passengers: i64,
     pub warnings: Vec<String>,
 }
 
@@ -100,6 +162,32 @@ fn xp(unit: &UnitBlock, field: &str) -> Option<i64> {
         .parse::<i64>()
         .ok()
         .filter(|value| *value >= 0)
+}
+
+/// SII quoted strings arrive with their quotes ("city.wien"); strip one pair.
+fn unquote(value: &str) -> &str {
+    let value = value.trim();
+    value
+        .strip_prefix('"')
+        .and_then(|inner| inner.strip_suffix('"'))
+        .unwrap_or(value)
+}
+
+/// Truck and bus career XP from a decrypted game.sii, read straight
+/// off the economy unit. Lightweight alternative to `read_snapshot`
+/// for callers that only need the XP figures: the XP editors (which
+/// must start from the true truck XP, not the info.sii total) and the
+/// info.sii sync (which stores the total, truck + bus). Either value
+/// is None when the economy unit or the field is missing.
+pub fn career_xp_from_content(content: &str) -> (Option<i64>, Option<i64>) {
+    let blocks = parse_unit_blocks(content);
+    let Ok(economy) = unique_unit(&blocks, "economy") else {
+        return (None, None);
+    };
+    (
+        xp(economy, Career::Truck.xp_field()),
+        xp(economy, Career::Bus.xp_field()),
+    )
 }
 
 pub fn read_snapshot(content: &str) -> Result<CoachesSnapshot, String> {
@@ -186,12 +274,53 @@ pub fn read_snapshot(content: &str) -> Result<CoachesSnapshot, String> {
     let job_logs = blocks
         .iter()
         .filter(|unit| unit.unit_type == "bus_job_log")
-        .map(|unit| BusJobLog {
-            id: unit.id.clone(),
-            version: extract_field_value(&unit.raw_block, "version"),
-            entries: extract_field_value(&unit.raw_block, "entries"),
+        .map(|unit| {
+            let entries_detail = extract_array_entries(&unit.raw_block, "entries")
+                .into_iter()
+                .filter_map(|(_, id)| {
+                    let entry = resolve(&blocks, &id)?;
+                    if entry.unit_type != "bus_job_log_entry" {
+                        return None;
+                    }
+                    let field = |name: &str| extract_field_value(&entry.raw_block, name);
+                    let text = |name: &str| field(name).map(|value| unquote(&value).to_string());
+                    Some(BusJobEntry {
+                        id,
+                        job_type: text("type"),
+                        assigned_bus: text("assigned_bus"),
+                        source_stop: text("source_bus_stop_name"),
+                        target_stop: text("target_bus_stop_name"),
+                        stage_count: field("stage_count").and_then(|v| v.parse().ok()),
+                        exp_delta: field("exp_delta").and_then(|v| v.parse().ok()),
+                        reward: field("reward").and_then(|v| v.parse().ok()),
+                        travelled_distance: field("travelled_distance")
+                            .and_then(|v| v.parse().ok()),
+                        start_time: field("start_time").and_then(|v| v.parse().ok()),
+                        end_time: field("end_time").and_then(|v| v.parse().ok()),
+                        total_passengers: field("total_passengers").and_then(|v| v.parse().ok()),
+                    })
+                })
+                .collect::<Vec<_>>();
+            BusJobLog {
+                id: unit.id.clone(),
+                version: extract_field_value(&unit.raw_block, "version"),
+                entries: extract_field_value(&unit.raw_block, "entries"),
+                entries_detail,
+            }
         })
-        .collect();
+        .collect::<Vec<_>>();
+    let all_entries = job_logs
+        .iter()
+        .flat_map(|log| log.entries_detail.iter())
+        .collect::<Vec<_>>();
+    let total_bus_jobs = all_entries.len();
+    let total_bus_exp = all_entries.iter().filter_map(|e| e.exp_delta).sum();
+    let total_bus_reward = all_entries.iter().filter_map(|e| e.reward).sum();
+    let total_bus_distance = all_entries
+        .iter()
+        .filter_map(|e| e.travelled_distance)
+        .sum();
+    let total_bus_passengers = all_entries.iter().filter_map(|e| e.total_passengers).sum();
     warnings.sort();
     warnings.dedup();
     Ok(CoachesSnapshot {
@@ -220,6 +349,11 @@ pub fn read_snapshot(content: &str) -> Result<CoachesSnapshot, String> {
         my_vehicles_mode: player_field("my_vehicles_mode"),
         assigned_vehicles_mode: player_field("assigned_vehicles_mode"),
         job_logs,
+        total_bus_jobs,
+        total_bus_exp,
+        total_bus_reward,
+        total_bus_distance,
+        total_bus_passengers,
         warnings,
     })
 }

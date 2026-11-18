@@ -2,7 +2,8 @@ use crate::dev_log;
 use crate::features::backup::models::BackupRestoreResultDto;
 use crate::features::backup::service as backup_service;
 use crate::features::logging::service as logging_service;
-use crate::shared::decrypt::decrypt_if_needed;
+use crate::shared::decrypt::{decrypt_from_disk, decrypt_if_needed};
+use crate::shared::save_session;
 use crate::shared::paths::{
     autosave_path, ets2_base_config_path, game_sii_from_save, quicksave_config_path,
 };
@@ -24,8 +25,27 @@ pub fn read_project_coaches(
         .with_file_name("game.sii");
     let content = decrypt_if_needed(&path)?;
     let mut snapshot = super::coaches::read_snapshot(&content)?;
-    snapshot.save_hash = career_save_hash(&path, &content);
+    // The save hash guards against EXTERNAL modification of the disk file,
+    // so it is computed from the disk content, not the staged working copy:
+    // staged edits from other screens must not trip it.
+    let disk_content = decrypt_from_disk(&path).unwrap_or_else(|_| content.clone());
+    snapshot.save_hash = career_save_hash(&path, &disk_content);
     Ok(snapshot)
+}
+
+/// Truck career XP from the active save's game.sii (the economy
+/// unit's `experience_points`). The XP editors start from this, NOT
+/// from the displayed XP: the display reads info.sii, which the game
+/// stores as truck + bus XP, so using it as the truck XP would inflate
+/// the truck career by the bus amount on every apply. Returns None
+/// when the save cannot be read or has no economy XP; callers fall
+/// back to the displayed value.
+pub fn read_truck_xp(profile_state: State<'_, AppProfileState>) -> Option<i64> {
+    let path = get_active_save_path(profile_state.inner())
+        .ok()?
+        .with_file_name("game.sii");
+    let content = decrypt_if_needed(&path).ok()?;
+    super::coaches::career_xp_from_content(&content).0
 }
 pub fn edit_career_xp(
     xp: i64,
@@ -45,6 +65,29 @@ pub fn edit_career_xp(
     )
 }
 
+/// Keep info.sii's summary fields in sync with a game.sii edit, so the
+/// dashboard / Save Editor tiles (which read info.sii) show staged
+/// values immediately instead of the pre-edit summary. Mirrors the
+/// batch edit's info.sii handling. A missing info.sii, or a missing
+/// field inside it, is silently skipped: the game regenerates the
+/// summary on next load, and the game.sii edit is what matters.
+/// Staging-aware: the sync is held in memory until Save, like the
+/// game.sii edit it mirrors.
+fn sync_info_summary_field(game_sii_path: &Path, fields: &[&str], value: i64) {
+    let info_path = game_sii_path.with_file_name("info.sii");
+    let Ok(content) = decrypt_if_needed(&info_path) else {
+        return;
+    };
+    let Ok(updated) = replace_numeric_fields(&content, fields, value, "", "info.sii sync")
+    else {
+        return;
+    };
+    if updated == content {
+        return;
+    }
+    let _ = write_save_text(&info_path, &updated);
+}
+
 fn write_career_xp(
     xp: i64,
     career: super::coaches::Career,
@@ -57,8 +100,11 @@ fn write_career_xp(
         .map_err(|error| error.user_message)?
         .with_file_name("game.sii");
     let original = decrypt_if_needed(&path)?;
-    if expected_save_hash.is_some_and(|hash| hash != career_save_hash(&path, &original)) {
-        return Err("coaches.save_changed".to_string());
+    if let Some(expected) = expected_save_hash {
+        let disk_content = decrypt_from_disk(&path)?;
+        if expected != career_save_hash(&path, &disk_content) {
+            return Err("coaches.save_changed".to_string());
+        }
     }
     let content = super::coaches::patch_xp(&original, career, xp)?;
     if content == original {
@@ -71,19 +117,32 @@ fn write_career_xp(
         "before career xp edit",
         "Career XP was updated for the active save.",
         &content,
-        |written_path| {
-            let written = fs::read_to_string(written_path)
-                .map_err(|error| failure("coaches.verify_failed", error.to_string()))?;
-            if written != content {
+        |written| {
+            if written != content.as_str() {
                 return Err(failure(
                     "coaches.verify_failed",
                     "Save readback differs from the prepared content.",
                 ));
             }
-            super::coaches::verify_xp(&written, career, xp)
+            super::coaches::verify_xp(written, career, xp)
                 .map_err(|error| failure("coaches.verify_failed", error))
         },
     );
+    // Truck XP is also shown from info.sii; bus XP has no info.sii field.
+    // Only sync when the game.sii write succeeded. info.sii stores the
+    // TOTAL (truck + bus) XP, so keep it a total: add the bus XP from
+    // the pre-edit content (a truck edit never touches it).
+    if result.is_ok() && career == super::coaches::Career::Truck {
+        let bus_xp = super::coaches::career_xp_from_content(&original)
+            .1
+            .unwrap_or(0);
+        sync_info_summary_field(
+            &path,
+            &["info_players_experience", "experience_points"],
+            xp.saturating_add(bus_xp),
+        );
+        decrypt_cache.invalidate_path(&path.with_file_name("info.sii"));
+    }
     decrypt_cache.invalidate_path(&path);
     profile_cache.invalidate_save_data();
     result.map_err(|error| error.user_message)
@@ -91,6 +150,79 @@ fn write_career_xp(
 
 fn career_save_hash(path: &Path, content: &str) -> String {
     super::coaches::save_hash(&format!("{}\0{}", path.display(), content))
+}
+
+/// Flush all staged `game.sii` edits to disk (top-bar Save button).
+/// Returns the saved file paths for the status message. Edits that fail
+/// to write are re-staged so the user can retry.
+pub fn save_pending_changes(
+    profile_state: State<'_, AppProfileState>,
+    profile_cache: State<'_, ProfileCache>,
+    decrypt_cache: State<'_, DecryptCache>,
+) -> Result<Vec<String>, String> {
+    let staged = save_session::take_for_flush();
+    if staged.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut saved = Vec::new();
+    let mut first_error: Option<String> = None;
+    let mut failed = Vec::new();
+    for (path, content) in staged {
+        let result = write_text_to_disk(
+            profile_state.inner(),
+            &path,
+            "save_pending_changes",
+            "before explicit save",
+            "Staged save changes were written to disk.",
+            &content,
+            |written| {
+                if written == content.as_str() {
+                    Ok(())
+                } else {
+                    Err(failure(
+                        "save.verify_failed",
+                        "Save readback differs from the staged content.",
+                    ))
+                }
+            },
+        );
+        match result {
+            Ok(()) => {
+                decrypt_cache.invalidate_path(&path);
+                saved.push(path.display().to_string());
+            }
+            Err(error) => {
+                if first_error.is_none() {
+                    first_error = Some(error.user_message.clone());
+                }
+                failed.push((path, content));
+            }
+        }
+    }
+    for (path, content) in &failed {
+        save_session::stage_save(path, content);
+    }
+    profile_cache.invalidate_save_data();
+    profile_cache.invalidate_vehicle_data();
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(saved),
+    }
+}
+
+/// Discard all staged edits (Reload / save-switch prompt). The disk
+/// files are untouched.
+pub fn discard_pending_changes(
+    profile_cache: State<'_, ProfileCache>,
+    decrypt_cache: State<'_, DecryptCache>,
+) -> Result<(), String> {
+    for path in save_session::dirty_paths() {
+        decrypt_cache.invalidate_path(&path);
+    }
+    save_session::discard();
+    profile_cache.invalidate_save_data();
+    profile_cache.invalidate_vehicle_data();
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -158,7 +290,52 @@ fn write_text_with_auto_backup<F>(
     verify_write: F,
 ) -> CommandResult<()>
 where
-    F: FnOnce(&Path) -> CommandResult<()>,
+    F: FnOnce(&str) -> CommandResult<()>,
+{
+    // Explicit-save staging: game.sii edits are held in memory until the
+    // user presses Save. Config files and everything else write directly.
+    if save_session::is_staging_enabled()
+        && path.file_name().is_some_and(|name| name == "game.sii")
+    {
+        verify_write(content)?;
+        save_session::stage_save(path, content);
+        let mut context = logging_service::resolve_active_context(profile_state);
+        context.extra.insert(
+            "target".to_string(),
+            logging_service::redact_path(&path.display().to_string()),
+        );
+        let _ = logging_service::record_info(
+            action,
+            "Edit staged; awaiting explicit Save.",
+            &context,
+        );
+        return Ok(());
+    }
+    write_text_to_disk(
+        profile_state,
+        path,
+        action,
+        action_reason,
+        success_message,
+        content,
+        verify_write,
+    )
+}
+
+/// The disk half of `write_text_with_auto_backup`: auto-backup, write,
+/// read back, verify. Used directly by the explicit-Save flush so the
+/// flush itself is never staged.
+fn write_text_to_disk<F>(
+    profile_state: &AppProfileState,
+    path: &Path,
+    action: &str,
+    action_reason: &str,
+    success_message: &str,
+    content: &str,
+    verify_write: F,
+) -> CommandResult<()>
+where
+    F: FnOnce(&str) -> CommandResult<()>,
 {
     let mut context = logging_service::resolve_active_context(profile_state);
     context.extra.insert(
@@ -210,7 +387,9 @@ where
         return Err(failure(user_message, technical));
     }
 
-    if let Err(error) = verify_write(path) {
+    let written = fs::read_to_string(path)
+        .map_err(|error| failure("write_verification_failed", error.to_string()))?;
+    if let Err(error) = verify_write(&written) {
         let _ = logging_service::record_error(
             action,
             Some("write_verification_failed"),
@@ -226,16 +405,13 @@ where
     Ok(())
 }
 
-fn verify_contains(path: &Path, expected_fragment: &str, user_message: &str) -> CommandResult<()> {
-    let verify =
-        fs::read_to_string(path).map_err(|error| failure(user_message, error.to_string()))?;
-    if !verify.contains(expected_fragment) {
+fn verify_contains(content: &str, expected_fragment: &str, user_message: &str) -> CommandResult<()> {
+    if !content.contains(expected_fragment) {
         return Err(failure(
             user_message,
             format!(
-                "The expected fragment `{}` was not found after writing {}.",
-                expected_fragment,
-                path.display()
+                "The expected fragment `{}` was not found after writing.",
+                expected_fragment
             ),
         ));
     }
@@ -447,6 +623,11 @@ fn update_info_save_content(
 }
 
 fn write_save_text(path: &Path, content: &str) -> CommandResult<()> {
+    // Explicit-save staging: hold the edit in memory until Save.
+    if save_session::is_staging_enabled() {
+        save_session::stage_save(path, content);
+        return Ok(());
+    }
     fs::write(path, content.as_bytes()).map_err(|error| {
         failure(
             "Could not write save file",
@@ -596,7 +777,20 @@ pub fn apply_custom_reset_values(
         trace.finish_error(&error.user_message);
         error.user_message
     })?;
-    let updated_info = update_info_save_content(&info_content, values).map_err(|error| {
+    // info.sii stores the TOTAL (truck + bus) XP, while the batch's XP
+    // value is the truck figure: add the bus XP back for the info
+    // file so the summary stays a total (it is 0 on saves without a
+    // bus career, so this is a no-op there).
+    let bus_xp = super::coaches::career_xp_from_content(&game_content)
+        .1
+        .unwrap_or(0);
+    let info_values = ResolvedCustomResetValues {
+        xp: values
+            .xp
+            .map(|xp| (xp as i64).saturating_add(bus_xp).max(0) as u64),
+        ..values
+    };
+    let updated_info = update_info_save_content(&info_content, info_values).map_err(|error| {
         trace.finish_error(&error.user_message);
         error.user_message
     })?;
@@ -827,7 +1021,10 @@ pub fn edit_player_money(
         |_| Ok(()),
     )
     .map_err(|error| error.user_message)?;
+    // Keep info.sii's summary in step so the tiles show the new value.
+    sync_info_summary_field(&path, &["info_money_account", "money_account"], value);
     decrypt_cache.invalidate_path(&path);
+    decrypt_cache.invalidate_path(&path.with_file_name("info.sii"));
     profile_cache.invalidate_save_data();
 
     dev_log!("Money erfolgreich geändert auf {}", value);
@@ -921,9 +1118,9 @@ pub fn edit_developer_value(
         "before developer config edit",
         "The global developer config value was updated.",
         new_content.as_ref(),
-        |written_path| {
+        |written| {
             verify_contains(
-                written_path,
+                written,
                 &expected,
                 "Developer-Wert konnte nicht verifiziert werden.",
             )
@@ -965,9 +1162,9 @@ pub fn edit_console_value(
         "before console config edit",
         "The global console config value was updated.",
         new_content.as_ref(),
-        |written_path| {
+        |written| {
             verify_contains(
-                written_path,
+                written,
                 &expected,
                 "Console-Wert konnte nicht verifiziert werden.",
             )
@@ -1009,9 +1206,9 @@ pub fn edit_convoy_value(
         "before convoy config edit",
         "The global convoy config value was updated.",
         new_content.as_ref(),
-        |written_path| {
+        |written| {
             verify_contains(
-                written_path,
+                written,
                 &expected,
                 "Convoy-Wert konnte nicht verifiziert werden.",
             )
@@ -1098,9 +1295,9 @@ pub fn edit_parking_doubles_value(
         "before parking doubles edit",
         "The profile parking doubles config value was updated.",
         new_content.as_ref(),
-        |written_path| {
+        |written| {
             verify_contains(
-                written_path,
+                written,
                 &expected,
                 "Simple Parking Doubles-Wert konnte nicht verifiziert werden.",
             )

@@ -4,6 +4,7 @@ use crate::features::logging::service as logging_service;
 use crate::shared::current_profile::require_current_profile;
 use crate::shared::decrypt::decrypt_if_needed;
 use crate::shared::paths::{autosave_path, ets2_base_config_path};
+use crate::shared::save_session;
 use crate::state::{AppProfileState, ProfileCache};
 use regex::Regex;
 use serde::Deserialize;
@@ -42,6 +43,14 @@ fn write_text_with_auto_backup(
     success_message: &str,
     content: &str,
 ) -> Result<(), String> {
+    // Explicit-save staging: game.sii edits are held in memory until
+    // Save. Config files write directly, as before.
+    if save_session::is_staging_enabled()
+        && path.file_name().is_some_and(|name| name == "game.sii")
+    {
+        save_session::stage_save(path, content);
+        return Ok(());
+    }
     let mut context = logging_service::resolve_active_context(profile_state);
     context.extra.insert(
         "target".to_string(),

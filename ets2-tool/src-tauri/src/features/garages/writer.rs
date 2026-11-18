@@ -10,6 +10,7 @@ use crate::features::truck_change::parser::{
     UnitBlock, extract_array_entries, extract_field_value, is_null_ref, normalize_sii_unit_id,
     parse_unit_blocks,
 };
+use crate::shared::save_session;
 
 use super::parser::{city_token_from_garage_id, parse_ai_driver_management_from_sii};
 
@@ -882,6 +883,11 @@ pub fn write_verified_content(
     verify_candidate: impl Fn(&str) -> Result<(), String>,
 ) -> Result<(), String> {
     verify_candidate(content)?;
+    // Explicit-save staging: hold the edit in memory until Save.
+    if save_session::is_staging_enabled() {
+        save_session::stage_save(target_path, content);
+        return Ok(());
+    }
     let temporary_path = temporary_path_for(target_path);
 
     let write_result = (|| {

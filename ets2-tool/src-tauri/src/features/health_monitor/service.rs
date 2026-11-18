@@ -17,6 +17,7 @@ use crate::features::logging::service as logging_service;
 use crate::shared::current_profile::{ResolvedSaveContext, snapshot_resolved_save_context};
 use crate::shared::decrypt::{decrypt_cached_with_cache, decrypt_if_needed};
 use crate::shared::paths::{game_sii_from_save, mod_directory_path};
+use crate::shared::save_session;
 use crate::shared::sii_parser::{
     get_player_id, get_vehicle_ids, parse_trailer_defs_from_sii, parse_trailers_from_sii,
     parse_trucks_from_sii,
@@ -633,12 +634,17 @@ fn apply_sync_player_xp_level_fix(
         .ok_or_else(|| "The player XP fields could not be found in the active save.".to_string())?;
     let derived_level = level_from_xp(xp_main);
 
-    let backup_targets = backup_service::recommended_targets(&save_path);
-    backup_service::create_backup_for_targets(
-        profile_state,
-        "before health fix sync player xp/level",
-        &backup_targets,
-    )?;
+    // Explicit-save staging: no backup at stage time; the flush creates
+    // the one backup that matters.
+    let staged = save_session::is_staging_enabled();
+    if !staged {
+        let backup_targets = backup_service::recommended_targets(&save_path);
+        backup_service::create_backup_for_targets(
+            profile_state,
+            "before health fix sync player xp/level",
+            &backup_targets,
+        )?;
+    }
 
     let xp_re = Regex::new(r"info_players_experience:\s*\d+").map_err(|error| error.to_string())?;
     let level_re = Regex::new(r"info_player_level:\s*\d+").map_err(|error| error.to_string())?;
@@ -649,11 +655,20 @@ fn apply_sync_player_xp_level_fix(
         )
         .to_string();
 
-    fs::write(&save_path, new_content.as_bytes()).map_err(|error| error.to_string())?;
+    if staged {
+        save_session::stage_save(&save_path, &new_content);
+    } else {
+        fs::write(&save_path, new_content.as_bytes()).map_err(|error| error.to_string())?;
+    }
     decrypt_cache.invalidate_path(&save_path);
     profile_cache.invalidate_save_data();
     profile_cache.invalidate_vehicle_data();
 
+    let outcome_message = if staged {
+        "XP and level metadata were staged (awaiting Save)."
+    } else {
+        "XP and level metadata were synchronized for the active save."
+    };
     let mut context = logging_service::resolve_active_context(profile_state);
     context
         .extra
@@ -662,16 +677,12 @@ fn apply_sync_player_xp_level_fix(
     context
         .extra
         .insert("level".to_string(), derived_level.to_string());
-    let _ = logging_service::record_info(
-        "save_health_fix",
-        "XP and level metadata were synchronized for the active save.",
-        &context,
-    );
+    let _ = logging_service::record_info("save_health_fix", outcome_message, &context);
 
     Ok(SaveHealthFixResultDto {
         fix_id: FIX_SYNC_PLAYER_XP_LEVEL.to_string(),
         applied: true,
-        message: "XP and level metadata were synchronized for the active save.".to_string(),
+        message: outcome_message.to_string(),
     })
 }
 

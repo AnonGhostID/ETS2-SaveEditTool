@@ -116,6 +116,12 @@ pub fn sub_tabs<T: Copy + PartialEq>(ui: &mut Ui, current: T, items: &[(T, &str)
     next
 }
 
+/// A read-only stat tile. Fills the available width, so use it inside
+/// `ui.columns()` (like the dashboard tiles) — NEVER inside
+/// `horizontal_wrapped`: there the available width is the *remaining*
+/// row width, so the first tile swallows the whole row and the rest
+/// collapse to zero-width slivers (and egui does not wrap Frame-based
+/// widgets in that row at all, so the extras overflow off-screen).
 pub fn stat_tile(ui: &mut Ui, label: &str, value: &str, accent: Color32) {
     Frame::none()
         .fill(theme::SURFACE)
@@ -133,6 +139,35 @@ pub fn stat_tile(ui: &mut Ui, label: &str, value: &str, accent: Color32) {
             ui.add_space(4.0);
             ui.label(RichText::new(value).size(19.0).strong().color(accent));
         });
+}
+
+/// A stat tile that acts as a button. Returns true when clicked.
+pub fn clickable_stat_tile(ui: &mut Ui, label: &str, value: &str, accent: Color32) -> bool {
+    let frame = Frame::none()
+        .fill(theme::SURFACE)
+        .stroke(Stroke::new(1.0f32, theme::BORDER))
+        .rounding(Rounding::same(10.0))
+        .inner_margin(Margin::symmetric(14.0, 12.0))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.label(
+                RichText::new(label)
+                    .size(9.5)
+                    .strong()
+                    .color(theme::MUTED),
+            );
+            ui.add_space(4.0);
+            ui.label(RichText::new(value).size(19.0).strong().color(accent));
+        });
+    let response = ui.interact(
+        frame.response.rect,
+        egui::Id::new(("clickable_stat_tile", label)),
+        Sense::click(),
+    );
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    response.clicked()
 }
 
 pub fn action_card(ui: &mut Ui, title: &str, description: &str, button: &str) -> bool {
@@ -197,4 +232,34 @@ pub fn empty_state(ui: &mut Ui, title: &str, hint: &str) {
 pub fn status_dot(ui: &mut Ui, color: Color32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), Sense::hover());
     ui.painter().circle_filled(rect.center(), 4.0, color);
+}
+
+/// Centered two-button confirmation dialog. Call each frame while the
+/// dialog is open; returns `Some(true)` when the confirm button is
+/// pressed, `Some(false)` for cancel, `None` while still open.
+pub fn confirm_dialog(
+    ctx: &egui::Context,
+    title: &str,
+    message: &str,
+    confirm_text: &str,
+    cancel_text: &str,
+) -> Option<bool> {
+    let mut choice = None;
+    egui::Window::new(title)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.label(message);
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if primary_button(ui, confirm_text).clicked() {
+                    choice = Some(true);
+                }
+                if ui.button(cancel_text).clicked() {
+                    choice = Some(false);
+                }
+            });
+        });
+    choice
 }

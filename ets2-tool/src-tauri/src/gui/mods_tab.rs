@@ -13,27 +13,52 @@ use crate::features::save_analysis::commands::{
 };
 use crate::gui::components::{self, UiExt};
 use crate::gui::{Ets2NativeApp, ModsSubTab};
+use crate::state::AppProfileState;
 use crate::tauri::async_runtime;
 
+/// A destructive mod action waiting on the confirm dialog.
+#[derive(Debug, Clone)]
+pub enum ModConfirm {
+    DeletePreset { id: String, name: String },
+    DeleteSandbox { id: String, title: String },
+}
+
 pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
-    components::page_header(
-        ui,
-        "Mods & Conflicts",
-        "Inspect installed mods, manage presets and diagnose crashes or conflicts.",
-    );
+    let (title, subtitle) = match app.mods_sub_tab {
+        ModsSubTab::ModManager => (
+            "Mod Manager",
+            "Inspect installed mods and apply them to the active profile.",
+        ),
+        ModsSubTab::PresetsAndSandboxes => (
+            "Presets & Sandboxes",
+            "Saved mod sets and isolated test profiles.",
+        ),
+        ModsSubTab::ConflictAnalyzer => (
+            "Conflict Analyzer",
+            "Diagnose crashes and conflicts between mods.",
+        ),
+    };
+    components::page_header(ui, title, subtitle);
     ui.add_space(8.0);
-    if let Some(sub) = components::sub_tabs(
-        ui,
-        app.mods_sub_tab,
-        &[
-            (ModsSubTab::ModManager, "Discovered Mods"),
-            (ModsSubTab::PresetsAndSandboxes, "Presets & Sandboxes"),
-            (ModsSubTab::ConflictAnalyzer, "Conflict Analyzer"),
-        ],
-    ) {
-        app.mods_sub_tab = sub;
+
+    // Pick up a finished background scan, if one arrived.
+    if let Some(result) = app.mods_scan_load.poll() {
+        match result {
+            Ok(state) => {
+                app.mod_presets = state.presets.clone();
+                app.mod_manager_state = Some(state);
+                app.set_status("Completed mod scan.", false);
+            }
+            Err(e) => app.set_status(e, true),
+        }
     }
-    ui.add_space(4.0);
+    if app.mods_scan_load.is_loading() {
+        // Keep repainting so the spinner animates and the result is
+        // picked up promptly.
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(100));
+    }
+
     ui.horizontal_wrapped(|ui| {
         if components::primary_button(ui, "Load State").clicked() {
             match load_mod_profile_manager_state(
@@ -49,33 +74,22 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                 Err(e) => app.set_status(e, true),
             }
         }
-        if ui.button("Quick Scan Mods").clicked() {
-            match scan_mods_light(
-                app.app.clone(),
-                app.profile_state(),
-                Some(app.selected_game.clone()),
-            ) {
-                Ok(state) => {
-                    app.mod_presets = state.presets.clone();
-                    app.mod_manager_state = Some(state);
-                    app.set_status("Completed light mod scan.", false);
-                }
-                Err(e) => app.set_status(e, true),
-            }
+        let scanning = app.mods_scan_load.is_loading();
+        if ui
+            .add_enabled(!scanning, egui::Button::new("Quick Scan Mods"))
+            .clicked()
+        {
+            start_mods_scan(app, false);
         }
-        if ui.button("Deep Scan Mods").clicked() {
-            match scan_mods_deep(
-                app.app.clone(),
-                app.profile_state(),
-                Some(app.selected_game.clone()),
-            ) {
-                Ok(state) => {
-                    app.mod_presets = state.presets.clone();
-                    app.mod_manager_state = Some(state);
-                    app.set_status("Completed deep mod scan.", false);
-                }
-                Err(e) => app.set_status(e, true),
-            }
+        if ui
+            .add_enabled(!scanning, egui::Button::new("Deep Scan Mods"))
+            .clicked()
+        {
+            start_mods_scan(app, true);
+        }
+        if scanning {
+            ui.spinner();
+            ui.label("Scanning mods…");
         }
         if ui.button("Open Steam Console").clicked() {
             if let Err(e) = open_steam_console() {
@@ -89,6 +103,57 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
         ModsSubTab::ModManager => render_mod_manager(app, ui),
         ModsSubTab::PresetsAndSandboxes => render_presets_and_sandboxes(app, ui),
         ModsSubTab::ConflictAnalyzer => render_conflict_analyzer(app, ui),
+    }
+
+    render_mod_confirm(app, ui);
+}
+
+fn start_mods_scan(app: &mut Ets2NativeApp, deep: bool) {
+    let handle = app.app.clone();
+    let game = Some(app.selected_game.clone());
+    app.mods_scan_load.start(move || {
+        let profile = handle.state::<AppProfileState>();
+        if deep {
+            scan_mods_deep(handle.clone(), profile, game)
+        } else {
+            scan_mods_light(handle.clone(), profile, game)
+        }
+    });
+}
+
+fn render_mod_confirm(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
+    let Some(confirm) = app.mod_confirm.clone() else {
+        return;
+    };
+    let (title, message) = match &confirm {
+        ModConfirm::DeletePreset { name, .. } => (
+            "Delete preset",
+            format!("Delete the mod preset \"{name}\"? This cannot be undone."),
+        ),
+        ModConfirm::DeleteSandbox { title, .. } => (
+            "Delete sandbox",
+            format!("Delete the sandbox \"{title}\" and its mod list? This cannot be undone."),
+        ),
+    };
+    match components::confirm_dialog(ui.ctx(), title, &message, "Delete", "Cancel") {
+        Some(true) => {
+            app.mod_confirm = None;
+            match confirm {
+                ModConfirm::DeletePreset { id, .. } => {
+                    let _ = delete_mod_preset(app.app.clone(), id);
+                    app.mod_presets =
+                        list_mod_presets(app.app.clone(), Some(app.selected_game.clone()))
+                            .unwrap_or_default();
+                    app.set_status("Deleted mod preset.", false);
+                }
+                ModConfirm::DeleteSandbox { id, .. } => {
+                    app.mod_sandboxes = delete_mod_sandbox(app.app.clone(), id).ok();
+                    app.set_status("Deleted sandbox.", false);
+                }
+            }
+        }
+        Some(false) => app.mod_confirm = None,
+        None => {}
     }
 }
 
@@ -225,10 +290,10 @@ fn render_presets_and_sandboxes(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                         let _ = export_mod_preset(app.app.clone(), preset.id.clone());
                     }
                     if ui.small_button("Delete").clicked() {
-                        let _ = delete_mod_preset(app.app.clone(), preset.id.clone());
-                        app.mod_presets =
-                            list_mod_presets(app.app.clone(), Some(app.selected_game.clone()))
-                                .unwrap_or_default();
+                        app.mod_confirm = Some(ModConfirm::DeletePreset {
+                            id: preset.id.clone(),
+                            name: preset.name.clone(),
+                        });
                     }
                 });
             }
@@ -282,8 +347,10 @@ fn render_presets_and_sandboxes(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                                 }
                             }
                             if ui.small_button("Delete").clicked() {
-                                app.mod_sandboxes =
-                                    delete_mod_sandbox(app.app.clone(), sb.id.clone()).ok();
+                                app.mod_confirm = Some(ModConfirm::DeleteSandbox {
+                                    id: sb.id.clone(),
+                                    title: sb.title.clone(),
+                                });
                             }
                         });
                         ui.horizontal(|ui| {

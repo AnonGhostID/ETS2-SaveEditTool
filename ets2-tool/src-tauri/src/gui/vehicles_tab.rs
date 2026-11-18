@@ -17,12 +17,47 @@ use crate::gui::components::{self, UiExt};
 use crate::gui::{Ets2NativeApp, VehiclesSubTab};
 use crate::tauri::async_runtime;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FleetTruckSort {
+    #[default]
+    Brand,
+    Odometer,
+    Fuel,
+    Garage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FleetTrailerSort {
+    #[default]
+    Body,
+    Cargo,
+    Wear,
+}
+
 pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
-    components::page_header(
-        ui,
-        "Vehicles & Fleet",
-        "Maintain the active truck and trailer, switch vehicles or swap the powertrain.",
-    );
+    let (title, subtitle) = match app.vehicles_sub_tab {
+        VehiclesSubTab::PlayerVehicleEditor => (
+            "Vehicle Editor",
+            "Maintain the active truck and trailer: repair, fuel, plates, odometer.",
+        ),
+        VehiclesSubTab::TruckSwitcher => (
+            "Truck Switcher",
+            "Swap the active truck for another one you own.",
+        ),
+        VehiclesSubTab::TrailerSwitcher => (
+            "Trailer Switcher",
+            "Swap the active trailer for another one you own.",
+        ),
+        VehiclesSubTab::PowertrainSwapper => (
+            "Powertrain",
+            "Swap the active truck's engine, gearbox or drivetrain.",
+        ),
+        VehiclesSubTab::FleetInventory => (
+            "Fleet Inventory",
+            "Every truck and trailer you own, in one place.",
+        ),
+    };
+    components::page_header(ui, title, subtitle);
     ui.add_space(8.0);
     ui.horizontal_wrapped(|ui| {
         if components::primary_button(ui, "Reload Vehicles").clicked() {
@@ -30,20 +65,6 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             app.set_status("Reloaded player and fleet vehicles.", false);
         }
     });
-    ui.add_space(4.0);
-    if let Some(sub) = components::sub_tabs(
-        ui,
-        app.vehicles_sub_tab,
-        &[
-            (VehiclesSubTab::PlayerVehicleEditor, "Truck & Trailer"),
-            (VehiclesSubTab::TruckSwitcher, "Truck Switcher"),
-            (VehiclesSubTab::TrailerSwitcher, "Trailer Switcher"),
-            (VehiclesSubTab::PowertrainSwapper, "Powertrain"),
-            (VehiclesSubTab::FleetInventory, "Fleet Inventory"),
-        ],
-    ) {
-        app.vehicles_sub_tab = sub;
-    }
     ui.add_space(8.0);
 
     match app.vehicles_sub_tab {
@@ -297,94 +318,123 @@ fn render_truck_switcher(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                 Err(e) => app.set_status(format!("Truck session error: {e}"), true),
             }
         }
-        ui.checkbox(
-            &mut app.create_backup_on_switch,
-            "Create persistent backup before switch",
-        );
     });
 
-    if let Some(session) = app.truck_change_session.clone() {
-        ui.label(format!(
-            "Current Active Truck: {} ({} {}) | Save Hash: {}",
-            session.current_truck.truck_id,
-            session.current_truck.brand.as_deref().unwrap_or(""),
-            session.current_truck.model.as_deref().unwrap_or(""),
-            session.save_hash
-        ));
-        ui.separator();
+    let Some(session) = app.truck_change_session.clone() else {
+        components::empty_state(
+            ui,
+            "No switch session",
+            "Scan owned trucks to start a switch session.",
+        );
+        return;
+    };
+    ui.add_space(4.0);
+    ui.label(format!(
+        "Current Active Truck: {} ({} {})",
+        session.current_truck.truck_id,
+        session.current_truck.brand.as_deref().unwrap_or(""),
+        session.current_truck.model.as_deref().unwrap_or(""),
+    ));
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.label("Search:");
+        ui.text_edit_singleline(&mut app.truck_switch_search);
+    });
+    ui.add_space(6.0);
 
-        egui::Grid::new("truck_switch_grid")
-            .striped(true)
-            .num_columns(7)
-            .show(ui, |ui| {
-                ui.strong("Truck ID");
-                ui.strong("Brand / Model");
-                ui.strong("Plate");
-                ui.strong("Garage");
-                ui.strong("Driver");
-                ui.strong("Status");
-                ui.strong("Action");
-                ui.end_row();
-
-                for item in &session.owned_trucks {
-                    ui.label(&item.truck_id);
-                    ui.label(format!(
-                        "{} {}",
-                        item.brand.as_deref().unwrap_or("-"),
-                        item.model.as_deref().unwrap_or("-")
-                    ));
-                    ui.label(item.display_license_plate.as_deref().unwrap_or("-"));
-                    ui.label(item.garage_display_name.as_deref().unwrap_or("-"));
-                    ui.label(item.driver_display_name.as_deref().unwrap_or("Free"));
-                    if item.is_active {
-                        ui.colored_label(Color32::from_rgb(88, 214, 141), "Active");
-                    } else if item.is_switchable {
-                        ui.label("Switchable");
-                    } else {
-                        ui.colored_label(
-                            Color32::from_rgb(231, 76, 60),
-                            item.blocked_reason.as_deref().unwrap_or("Blocked"),
-                        );
-                    }
-
-                    if ui
-                        .add_enabled(!item.is_active, egui::Button::new("Preview Switch"))
-                        .clicked()
-                    {
-                        app.selected_switch_truck_id = item.truck_id.clone();
-                        match async_runtime::block_on(preview_active_truck_switch(
-                            app.selected_save_path.clone(),
-                            item.truck_id.clone(),
-                            session.save_hash.clone(),
-                            app.profile_state(),
-                            app.decrypt_cache(),
-                        )) {
-                            Ok(preview) => app.truck_switch_preview = Some(preview),
-                            Err(e) => app.set_status(format!("Preview failed: {e}"), true),
-                        }
-                    }
+    // Master-detail: selectable table left, preview + Apply right.
+    ui.columns(2, |cols| {
+        let filter = app.truck_switch_search.trim().to_ascii_lowercase();
+        egui::ScrollArea::vertical().max_height(420.0).show(&mut cols[0], |ui| {
+            egui::Grid::new("truck_switch_grid")
+                .striped(true)
+                .num_columns(4)
+                .show(ui, |ui| {
+                    ui.strong("Truck");
+                    ui.strong("Plate");
+                    ui.strong("Garage");
+                    ui.strong("Status");
                     ui.end_row();
-                }
-            });
+
+                    for item in &session.owned_trucks {
+                        let brand_model = format!(
+                            "{} {}",
+                            item.brand.as_deref().unwrap_or("-"),
+                            item.model.as_deref().unwrap_or("-")
+                        );
+                        if !filter.is_empty()
+                            && !brand_model.to_ascii_lowercase().contains(&filter)
+                            && !item.truck_id.to_ascii_lowercase().contains(&filter)
+                            && !item
+                                .display_license_plate
+                                .as_deref()
+                                .unwrap_or("")
+                                .to_ascii_lowercase()
+                                .contains(&filter)
+                        {
+                            continue;
+                        }
+                        let selected = app.selected_switch_truck_id == item.truck_id;
+                        if ui
+                            .selectable_label(selected, format!("{brand_model}\n{}", item.truck_id))
+                            .clicked()
+                        {
+                            app.selected_switch_truck_id = item.truck_id.clone();
+                            if item.is_active || !item.is_switchable {
+                                app.truck_switch_preview = None;
+                            } else {
+                                match async_runtime::block_on(preview_active_truck_switch(
+                                    app.selected_save_path.clone(),
+                                    item.truck_id.clone(),
+                                    session.save_hash.clone(),
+                                    app.profile_state(),
+                                    app.decrypt_cache(),
+                                )) {
+                                    Ok(preview) => app.truck_switch_preview = Some(preview),
+                                    Err(e) => app.set_status(format!("Preview failed: {e}"), true),
+                                }
+                            }
+                        }
+                        ui.label(item.display_license_plate.as_deref().unwrap_or("-"));
+                        ui.label(item.garage_display_name.as_deref().unwrap_or("-"));
+                        if item.is_active {
+                            ui.colored_label(Color32::from_rgb(88, 214, 141), "Active");
+                        } else if item.is_switchable {
+                            ui.label("Switchable");
+                        } else {
+                            ui.colored_label(
+                                Color32::from_rgb(231, 76, 60),
+                                item.blocked_reason.as_deref().unwrap_or("Blocked"),
+                            );
+                        }
+                        ui.end_row();
+                    }
+                });
+        });
 
         if let Some(preview) = app.truck_switch_preview.clone() {
-            ui.separator();
-            ui.group(|ui| {
+            cols[1].card(|ui| {
                 ui.heading("Truck Switch Preview");
                 ui.label(format!(
-                    "Target: {} ({:?}) | Safe to write: {} | Can apply: {}",
-                    preview.target_truck.truck_id,
-                    preview.mode,
-                    preview.safe_to_write,
-                    preview.can_apply
+                    "Target: {} ({:?})",
+                    preview.target_truck.truck_id, preview.mode
+                ));
+                ui.label(format!(
+                    "Safe to write: {} | Can apply: {}",
+                    preview.safe_to_write, preview.can_apply
                 ));
                 for warn in &preview.warnings {
                     ui.colored_label(Color32::from_rgb(245, 176, 65), format!("⚠ {warn}"));
                 }
+                ui.checkbox(
+                    &mut app.create_backup_on_switch,
+                    "Create persistent backup before switch",
+                );
+                ui.add_space(4.0);
                 if ui
                     .add_enabled(
                         preview.can_apply,
-                        egui::Button::new("✅ Apply Active Truck Switch"),
+                        egui::Button::new("Apply Active Truck Switch"),
                     )
                     .clicked()
                 {
@@ -414,8 +464,14 @@ fn render_truck_switcher(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     }
                 }
             });
+        } else {
+            components::empty_state(
+                &mut cols[1],
+                "No truck selected",
+                "Select a switchable truck to preview the switch.",
+            );
         }
-    }
+    });
 }
 
 fn render_trailer_switcher(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
@@ -441,70 +497,116 @@ fn render_trailer_switcher(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
         }
     }
 
-    if let Some(session) = app.trailer_change_session.clone() {
-        ui.label(format!(
-            "Current Active Trailer: {} ({}) | Save Hash: {}",
-            session.current_trailer.trailer_id, session.current_trailer.display_name, session.save_hash
-        ));
-        ui.separator();
+    let Some(session) = app.trailer_change_session.clone() else {
+        components::empty_state(
+            ui,
+            "No switch session",
+            "Scan owned trailers to start a switch session.",
+        );
+        return;
+    };
+    ui.add_space(4.0);
+    ui.label(format!(
+        "Current Active Trailer: {} ({})",
+        session.current_trailer.trailer_id, session.current_trailer.display_name
+    ));
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.label("Search:");
+        ui.text_edit_singleline(&mut app.trailer_switch_search);
+    });
+    ui.add_space(6.0);
 
-        egui::Grid::new("trailer_switch_grid")
-            .striped(true)
-            .num_columns(6)
-            .show(ui, |ui| {
-                ui.strong("Trailer ID");
-                ui.strong("Name");
-                ui.strong("Plate");
-                ui.strong("Garage");
-                ui.strong("Status");
-                ui.strong("Action");
-                ui.end_row();
-
-                for item in &session.owned_trailers {
-                    ui.label(&item.trailer_id);
-                    ui.label(&item.display_name);
-                    ui.label(item.display_license_plate.as_deref().unwrap_or("-"));
-                    ui.label(item.garage_display_name.as_deref().unwrap_or("-"));
-                    ui.label(if item.is_active {
-                        "Active"
-                    } else if item.is_switchable {
-                        "Switchable"
-                    } else {
-                        "Blocked"
-                    });
-                    if ui
-                        .add_enabled(!item.is_active, egui::Button::new("Preview Switch"))
-                        .clicked()
-                    {
-                        match async_runtime::block_on(preview_active_trailer_switch(
-                            app.selected_save_path.clone(),
-                            item.trailer_id.clone(),
-                            session.save_hash.clone(),
-                            app.profile_state(),
-                            app.decrypt_cache(),
-                        )) {
-                            Ok(preview) => app.trailer_switch_preview = Some(preview),
-                            Err(e) => app.set_status(format!("Trailer preview failed: {e}"), true),
-                        }
-                    }
+    // Master-detail: selectable table left, preview + Apply right.
+    ui.columns(2, |cols| {
+        let filter = app.trailer_switch_search.trim().to_ascii_lowercase();
+        egui::ScrollArea::vertical().max_height(420.0).show(&mut cols[0], |ui| {
+            egui::Grid::new("trailer_switch_grid")
+                .striped(true)
+                .num_columns(4)
+                .show(ui, |ui| {
+                    ui.strong("Trailer");
+                    ui.strong("Plate");
+                    ui.strong("Garage");
+                    ui.strong("Status");
                     ui.end_row();
-                }
-            });
+
+                    for item in &session.owned_trailers {
+                        if !filter.is_empty()
+                            && !item.display_name.to_ascii_lowercase().contains(&filter)
+                            && !item.trailer_id.to_ascii_lowercase().contains(&filter)
+                            && !item
+                                .display_license_plate
+                                .as_deref()
+                                .unwrap_or("")
+                                .to_ascii_lowercase()
+                                .contains(&filter)
+                        {
+                            continue;
+                        }
+                        let selected = app.selected_switch_trailer_id == item.trailer_id;
+                        if ui
+                            .selectable_label(
+                                selected,
+                                format!("{}\n{}", item.display_name, item.trailer_id),
+                            )
+                            .clicked()
+                        {
+                            app.selected_switch_trailer_id = item.trailer_id.clone();
+                            if item.is_active || !item.is_switchable {
+                                app.trailer_switch_preview = None;
+                            } else {
+                                match async_runtime::block_on(preview_active_trailer_switch(
+                                    app.selected_save_path.clone(),
+                                    item.trailer_id.clone(),
+                                    session.save_hash.clone(),
+                                    app.profile_state(),
+                                    app.decrypt_cache(),
+                                )) {
+                                    Ok(preview) => app.trailer_switch_preview = Some(preview),
+                                    Err(e) => {
+                                        app.set_status(format!("Trailer preview failed: {e}"), true)
+                                    }
+                                }
+                            }
+                        }
+                        ui.label(item.display_license_plate.as_deref().unwrap_or("-"));
+                        ui.label(item.garage_display_name.as_deref().unwrap_or("-"));
+                        if item.is_active {
+                            ui.colored_label(Color32::from_rgb(88, 214, 141), "Active");
+                        } else if item.is_switchable {
+                            ui.label("Switchable");
+                        } else {
+                            ui.colored_label(Color32::from_rgb(231, 76, 60), "Blocked");
+                        }
+                        ui.end_row();
+                    }
+                });
+        });
 
         if let Some(preview) = app.trailer_switch_preview.clone() {
-            ui.separator();
-            ui.group(|ui| {
+            cols[1].card(|ui| {
                 ui.heading("Trailer Switch Preview");
                 ui.label(format!(
-                    "Target: {} ({}) | Safe to write: {}",
-                    preview.target_trailer.trailer_id,
-                    preview.target_trailer.display_name,
-                    preview.safe_to_write
+                    "Target: {} ({})",
+                    preview.target_trailer.trailer_id, preview.target_trailer.display_name
                 ));
+                ui.label(format!(
+                    "Safe to write: {} | Can apply: {}",
+                    preview.safe_to_write, preview.can_apply
+                ));
+                for warn in &preview.warnings {
+                    ui.colored_label(Color32::from_rgb(245, 176, 65), format!("⚠ {warn}"));
+                }
+                ui.checkbox(
+                    &mut app.create_backup_on_switch,
+                    "Create persistent backup before switch",
+                );
+                ui.add_space(4.0);
                 if ui
                     .add_enabled(
                         preview.can_apply,
-                        egui::Button::new("✅ Apply Active Trailer Switch"),
+                        egui::Button::new("Apply Active Trailer Switch"),
                     )
                     .clicked()
                 {
@@ -531,8 +633,14 @@ fn render_trailer_switcher(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     }
                 }
             });
+        } else {
+            components::empty_state(
+                &mut cols[1],
+                "No trailer selected",
+                "Select a switchable trailer to preview the switch.",
+            );
         }
-    }
+    });
 }
 
 fn render_powertrain_swapper(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
@@ -659,57 +767,238 @@ fn render_powertrain_swapper(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
 }
 
 fn render_fleet_inventory(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
-    ui.heading(format!("Owned Trucks ({})", app.all_trucks.len()));
-    egui::Grid::new("all_trucks_grid")
-        .striped(true)
-        .num_columns(6)
-        .show(ui, |ui| {
-            ui.strong("Truck ID");
-            ui.strong("Brand & Model");
-            ui.strong("License Plate");
-            ui.strong("Odometer (km)");
-            ui.strong("Fuel %");
-            ui.strong("Garage");
-            ui.end_row();
-            for t in &app.all_trucks {
-                ui.label(&t.truck_id);
-                ui.label(format!("{} {}", t.brand, t.model));
-                ui.label(t.license_plate.as_deref().unwrap_or("-"));
-                ui.label(format!("{:.0}", t.odometer));
-                ui.label(format!("{:.0}%", t.fuel_relative * 100.0));
-                ui.label(t.assigned_garage.as_deref().unwrap_or("-"));
-                ui.end_row();
-            }
+    ui.horizontal(|ui| {
+        ui.label("Search:");
+        ui.text_edit_singleline(&mut app.fleet_search);
+    });
+    ui.add_space(8.0);
+
+    let filter = app.fleet_search.trim().to_ascii_lowercase();
+    let mut trucks: Vec<&crate::models::trucks::ParsedTruck> = app
+        .all_trucks
+        .iter()
+        .filter(|t| {
+            filter.is_empty()
+                || format!("{} {}", t.brand, t.model)
+                    .to_ascii_lowercase()
+                    .contains(&filter)
+                || t.truck_id.to_ascii_lowercase().contains(&filter)
+                || t.license_plate
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    .contains(&filter)
+        })
+        .collect();
+    let truck_sort = app.fleet_truck_sort;
+    let truck_asc = app.fleet_truck_sort_asc;
+    trucks.sort_by(|a, b| {
+        let ord = match truck_sort {
+            FleetTruckSort::Brand => format!("{} {}", a.brand, a.model)
+                .cmp(&format!("{} {}", b.brand, b.model)),
+            FleetTruckSort::Odometer => a
+                .odometer
+                .partial_cmp(&b.odometer)
+                .unwrap_or(std::cmp::Ordering::Equal),
+            FleetTruckSort::Fuel => a
+                .fuel_relative
+                .partial_cmp(&b.fuel_relative)
+                .unwrap_or(std::cmp::Ordering::Equal),
+            FleetTruckSort::Garage => a
+                .assigned_garage
+                .as_deref()
+                .unwrap_or("")
+                .cmp(b.assigned_garage.as_deref().unwrap_or("")),
+        };
+        if truck_asc {
+            ord
+        } else {
+            ord.reverse()
+        }
+    });
+
+    ui.heading(format!("Owned Trucks ({})", trucks.len()));
+    if trucks.is_empty() {
+        components::empty_state(
+            ui,
+            "No trucks match",
+            "Try a different search, or reload the save data.",
+        );
+    } else {
+        egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+            egui::Grid::new("all_trucks_grid")
+                .striped(true)
+                .num_columns(6)
+                .show(ui, |ui| {
+                    ui.strong("Truck ID");
+                    fleet_sort_header(
+                        &mut app.fleet_truck_sort,
+                        &mut app.fleet_truck_sort_asc,
+                        ui,
+                        "Brand & Model",
+                        FleetTruckSort::Brand,
+                    );
+                    ui.strong("License Plate");
+                    fleet_sort_header(
+                        &mut app.fleet_truck_sort,
+                        &mut app.fleet_truck_sort_asc,
+                        ui,
+                        "Odometer (km)",
+                        FleetTruckSort::Odometer,
+                    );
+                    fleet_sort_header(
+                        &mut app.fleet_truck_sort,
+                        &mut app.fleet_truck_sort_asc,
+                        ui,
+                        "Fuel %",
+                        FleetTruckSort::Fuel,
+                    );
+                    fleet_sort_header(
+                        &mut app.fleet_truck_sort,
+                        &mut app.fleet_truck_sort_asc,
+                        ui,
+                        "Garage",
+                        FleetTruckSort::Garage,
+                    );
+                    ui.end_row();
+                    for t in &trucks {
+                        ui.label(&t.truck_id);
+                        ui.label(format!("{} {}", t.brand, t.model));
+                        ui.label(t.license_plate.as_deref().unwrap_or("-"));
+                        ui.label(format!("{:.0}", t.odometer));
+                        ui.label(format!("{:.0}%", t.fuel_relative * 100.0));
+                        ui.label(t.assigned_garage.as_deref().unwrap_or("-"));
+                        ui.end_row();
+                    }
+                });
         });
+    }
 
     ui.add_space(12.0);
-    ui.heading(format!("Owned Trailers ({})", app.all_trailers.len()));
-    egui::Grid::new("all_trailers_grid")
-        .striped(true)
-        .num_columns(5)
-        .show(ui, |ui| {
-            ui.strong("Trailer ID");
-            ui.strong("Body Type");
-            ui.strong("License Plate");
-            ui.strong("Cargo Mass (kg)");
-            ui.strong("Body / Chassis Wear");
-            ui.end_row();
-            for tr in &app.all_trailers {
-                ui.label(&tr.trailer_id);
-                ui.label(tr.body_type.as_deref().unwrap_or("-"));
-                ui.label(
-                    tr.display_license_plate
-                        .as_deref()
-                        .or(tr.license_plate.as_deref())
-                        .unwrap_or("-"),
-                );
-                ui.label(format!("{:.1}", tr.cargo_mass));
-                ui.label(format!(
-                    "{:.1}% / {:.1}%",
-                    tr.body_wear * 100.0,
-                    tr.chassis_wear * 100.0
-                ));
-                ui.end_row();
-            }
+    let mut trailers: Vec<&crate::models::trailers::ParsedTrailer> = app
+        .all_trailers
+        .iter()
+        .filter(|tr| {
+            filter.is_empty()
+                || tr.body_type
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    .contains(&filter)
+                || tr.trailer_id.to_ascii_lowercase().contains(&filter)
+                || tr.display_license_plate
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    .contains(&filter)
+        })
+        .collect();
+    let trailer_sort = app.fleet_trailer_sort;
+    let trailer_asc = app.fleet_trailer_sort_asc;
+    trailers.sort_by(|a, b| {
+        let ord = match trailer_sort {
+            FleetTrailerSort::Body => a
+                .body_type
+                .as_deref()
+                .unwrap_or("")
+                .cmp(b.body_type.as_deref().unwrap_or("")),
+            FleetTrailerSort::Cargo => a
+                .cargo_mass
+                .partial_cmp(&b.cargo_mass)
+                .unwrap_or(std::cmp::Ordering::Equal),
+            FleetTrailerSort::Wear => (a.body_wear + a.chassis_wear)
+                .partial_cmp(&(b.body_wear + b.chassis_wear))
+                .unwrap_or(std::cmp::Ordering::Equal),
+        };
+        if trailer_asc {
+            ord
+        } else {
+            ord.reverse()
+        }
+    });
+
+    ui.heading(format!("Owned Trailers ({})", trailers.len()));
+    if trailers.is_empty() {
+        components::empty_state(
+            ui,
+            "No trailers match",
+            "Try a different search, or reload the save data.",
+        );
+    } else {
+        egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+            egui::Grid::new("all_trailers_grid")
+                .striped(true)
+                .num_columns(5)
+                .show(ui, |ui| {
+                    ui.strong("Trailer ID");
+                    fleet_sort_header(
+                        &mut app.fleet_trailer_sort,
+                        &mut app.fleet_trailer_sort_asc,
+                        ui,
+                        "Body Type",
+                        FleetTrailerSort::Body,
+                    );
+                    ui.strong("License Plate");
+                    fleet_sort_header(
+                        &mut app.fleet_trailer_sort,
+                        &mut app.fleet_trailer_sort_asc,
+                        ui,
+                        "Cargo Mass (kg)",
+                        FleetTrailerSort::Cargo,
+                    );
+                    fleet_sort_header(
+                        &mut app.fleet_trailer_sort,
+                        &mut app.fleet_trailer_sort_asc,
+                        ui,
+                        "Body / Chassis Wear",
+                        FleetTrailerSort::Wear,
+                    );
+                    ui.end_row();
+                    for tr in &trailers {
+                        ui.label(&tr.trailer_id);
+                        ui.label(tr.body_type.as_deref().unwrap_or("-"));
+                        ui.label(
+                            tr.display_license_plate
+                                .as_deref()
+                                .or(tr.license_plate.as_deref())
+                                .unwrap_or("-"),
+                        );
+                        ui.label(format!("{:.1}", tr.cargo_mass));
+                        ui.label(format!(
+                            "{:.1}% / {:.1}%",
+                            tr.body_wear * 100.0,
+                            tr.chassis_wear * 100.0
+                        ));
+                        ui.end_row();
+                    }
+                });
         });
+    }
+}
+
+/// A clickable table header that toggles sorting by `key`.
+fn fleet_sort_header<T: Copy + PartialEq>(
+    current: &mut T,
+    ascending: &mut bool,
+    ui: &mut egui::Ui,
+    label: &str,
+    key: T,
+) {
+    let arrow = if *current == key {
+        if *ascending {
+            " ▲"
+        } else {
+            " ▼"
+        }
+    } else {
+        ""
+    };
+    if ui.button(format!("{label}{arrow}")).clicked() {
+        if *current == key {
+            *ascending = !*ascending;
+        } else {
+            *current = key;
+            *ascending = true;
+        }
+    }
 }

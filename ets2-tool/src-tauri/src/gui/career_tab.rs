@@ -17,36 +17,49 @@ use crate::features::vtc::commands::{
     create_company, get_company_members, get_company_overview, get_current_user_profile,
 };
 use crate::features::vtc::models::CreateCompanyInput;
+use crate::features::career::dispatcher::DispatcherMarketJob;
 use crate::gui::components::{self, UiExt};
-use crate::gui::{CareerSubTab, Ets2NativeApp};
+use crate::gui::{CareerSubTab, Ets2NativeApp, theme};
 use crate::tauri::async_runtime;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DispatcherSort {
+    #[default]
+    Reward,
+    Distance,
+    Rate,
+}
 
 pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui, ctx: &egui::Context) {
     // Request periodic repaint on Career tab for live telemetry updates
     ctx.request_repaint_after(Duration::from_millis(500));
 
-    components::page_header(
-        ui,
-        "Career & Dispatcher",
-        "Live telemetry, freight jobs, logbook analytics and your virtual company.",
-    );
-    ui.add_space(8.0);
-    if let Some(sub) = components::sub_tabs(
-        ui,
-        app.career_sub_tab,
-        &[
-            (CareerSubTab::LiveTelemetry, "Live Telemetry"),
-            (CareerSubTab::Dispatcher, "Freight Market"),
-            (CareerSubTab::LogbookAndAnalytics, "Logbook & Analytics"),
-            (CareerSubTab::VtcAndAccount, "VTC & Account"),
-        ],
-    ) {
-        app.career_sub_tab = sub;
-        if app.career_overview.is_none() {
-            refresh_career_data(app);
-        }
+    // Load career data on first visit (the sidebar now owns sub-tab
+    // switching, so there is no switch event to hook anymore).
+    if app.career_overview.is_none() {
+        refresh_career_data(app);
     }
-    ui.add_space(4.0);
+
+    let (title, subtitle) = match app.career_sub_tab {
+        CareerSubTab::LiveTelemetry => (
+            "Live Telemetry",
+            "What the game is doing right now: speed, fuel, trip and company.",
+        ),
+        CareerSubTab::Dispatcher => (
+            "Freight Dispatcher",
+            "Generate and manage market jobs for the active profile.",
+        ),
+        CareerSubTab::LogbookAndAnalytics => (
+            "Logbook & Analytics",
+            "Your delivery history, earnings and performance over time.",
+        ),
+        CareerSubTab::VtcAndAccount => (
+            "VTC & Account",
+            "Your virtual trucking company and account.",
+        ),
+    };
+    components::page_header(ui, title, subtitle);
+    ui.add_space(8.0);
     ui.horizontal_wrapped(|ui| {
         if components::primary_button(ui, "Refresh Career & Dispatcher").clicked() {
             refresh_career_data(app);
@@ -226,30 +239,120 @@ fn render_dispatcher(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
     });
 
     if let Some(st) = &app.dispatcher_gen_status {
-        ui.label(format!(
-            "Open Market Jobs: {} (Generated: {}) | Save Link Active: {}",
-            st.open_total_jobs, st.open_generated_jobs, st.save_link_active
-        ));
+        ui.add_space(6.0);
+        ui.columns(3, |cols| {
+            components::stat_tile(
+                &mut cols[0],
+                "Open Market Jobs",
+                &st.open_total_jobs.to_string(),
+                theme::ACCENT,
+            );
+            components::stat_tile(
+                &mut cols[1],
+                "Generated",
+                &st.open_generated_jobs.to_string(),
+                theme::MUTED,
+            );
+            components::stat_tile(
+                &mut cols[2],
+                "Save Link Active",
+                if st.save_link_active { "Yes" } else { "No" },
+                if st.save_link_active {
+                    theme::SUCCESS
+                } else {
+                    theme::WARNING
+                },
+            );
+        });
     }
 
-    ui.separator();
-    ui.heading(format!("Available Market Jobs ({})", app.market_jobs.len()));
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.label("Search:");
+        ui.text_edit_singleline(&mut app.job_search_filter);
+    });
+    ui.add_space(6.0);
+
+    let filter = app.job_search_filter.trim().to_ascii_lowercase();
+    // Clone so the table can sort/filter without borrowing `app` while
+    // the sort headers mutate it.
+    let market_jobs = app.market_jobs.clone();
+    let mut jobs: Vec<&DispatcherMarketJob> = market_jobs.iter()
+        .filter(|job| {
+            filter.is_empty()
+                || job.company_name.to_ascii_lowercase().contains(&filter)
+                || job.origin_city.to_ascii_lowercase().contains(&filter)
+                || job.destination_city.to_ascii_lowercase().contains(&filter)
+                || job.cargo_type.to_ascii_lowercase().contains(&filter)
+        })
+        .collect();
+    let sort_key = app.dispatcher_sort;
+    let sort_asc = app.dispatcher_sort_asc;
+    jobs.sort_by(|a, b| {
+        let ord = match sort_key {
+            DispatcherSort::Reward => a.total_reward.cmp(&b.total_reward),
+            DispatcherSort::Distance => a
+                .distance_km
+                .partial_cmp(&b.distance_km)
+                .unwrap_or(std::cmp::Ordering::Equal),
+            DispatcherSort::Rate => a
+                .calculated_rate_per_km
+                .partial_cmp(&b.calculated_rate_per_km)
+                .unwrap_or(std::cmp::Ordering::Equal),
+        };
+        if sort_asc {
+            ord
+        } else {
+            ord.reverse()
+        }
+    });
+
+    ui.heading(format!("Available Market Jobs ({})", jobs.len()));
+    if jobs.is_empty() {
+        components::empty_state(
+            ui,
+            "No jobs match",
+            "Try a different search, or generate new market jobs.",
+        );
+        return;
+    }
+
     egui::Grid::new("dispatcher_jobs_grid")
         .striped(true)
-        .num_columns(8)
+        .num_columns(7)
         .show(ui, |ui| {
             ui.strong("Company");
             ui.strong("Route");
             ui.strong("Cargo");
-            ui.strong("Distance");
-            ui.strong("Rate/km");
-            ui.strong("Reward");
+            dispatcher_sort_header(
+                &mut app.dispatcher_sort,
+                &mut app.dispatcher_sort_asc,
+                ui,
+                "Distance",
+                DispatcherSort::Distance,
+            );
+            dispatcher_sort_header(
+                &mut app.dispatcher_sort,
+                &mut app.dispatcher_sort_asc,
+                ui,
+                "Rate/km",
+                DispatcherSort::Rate,
+            );
+            dispatcher_sort_header(
+                &mut app.dispatcher_sort,
+                &mut app.dispatcher_sort_asc,
+                ui,
+                "Reward",
+                DispatcherSort::Reward,
+            );
             ui.strong("Status");
-            ui.strong("Actions");
             ui.end_row();
 
-            for job in app.market_jobs.clone() {
-                ui.label(&job.company_name);
+            for job in &jobs {
+                let selected = app.selected_market_job_id == job.id;
+                if ui.selectable_label(selected, &job.company_name).clicked() {
+                    app.selected_market_job_id = job.id.clone();
+                }
                 ui.label(format!(
                     "{} ({}) → {} ({})",
                     job.origin_city, job.origin_country, job.destination_city, job.destination_country
@@ -263,54 +366,162 @@ fn render_dispatcher(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     job.status,
                     job.ets2_job_link_status.as_deref().unwrap_or("-")
                 ));
-                ui.horizontal(|ui| {
-                    if ui.small_button("Accept").clicked() {
-                        match dispatcher_accept_job(
-                            job.id.clone(),
-                            app.career_state(),
-                            app.profile_state(),
-                        ) {
-                            Ok(_) => {
-                                refresh_career_data(app);
-                                app.set_status(format!("Accepted job {}.", job.id), false);
-                            }
-                            Err(e) => app.set_status(e, true),
-                        }
-                    }
-                    if ui.small_button("⚡ Write to Quicksave").clicked() {
-                        match async_runtime::block_on(dispatcher_assign_and_prepare_and_write(
-                            job.id.clone(),
-                            true,
-                            app.app.clone(),
-                            app.career_state(),
-                            app.profile_state(),
-                            app.ets_db_state(),
-                        )) {
-                            Ok(dto) => {
-                                refresh_career_data(app);
-                                app.set_status(
-                                    format!(
-                                        "Job {} written to quicksave (applied={}).",
-                                        dto.job.job.id, dto.write_applied
-                                    ),
-                                    false,
-                                );
-                            }
-                            Err(e) => app.set_status(format!("Write to quicksave failed: {e}"), true),
-                        }
-                    }
-                    if ui.small_button("Cancel").clicked() {
-                        let _ = dispatcher_cancel_job(
-                            job.id.clone(),
-                            app.career_state(),
-                            app.profile_state(),
-                        );
-                        refresh_career_data(app);
-                    }
-                });
                 ui.end_row();
             }
         });
+
+    // Detail card for the selected job.
+    if let Some(job) = app
+        .market_jobs
+        .iter()
+        .find(|job| job.id == app.selected_market_job_id)
+        .cloned()
+    {
+        render_job_detail(app, ui, &job);
+    }
+}
+
+fn render_job_detail(
+    app: &mut Ets2NativeApp,
+    ui: &mut egui::Ui,
+    job: &DispatcherMarketJob,
+) {
+    ui.add_space(10.0);
+    ui.card(|ui| {
+        ui.heading(format!(
+            "{} → {}",
+            job.origin_city, job.destination_city
+        ));
+        ui.label(format!(
+            "{} · {} ({:.0} kg) · {:.0} km · ~{} min",
+            job.company_name,
+            job.cargo_type,
+            job.cargo_mass_kg,
+            job.distance_km,
+            job.estimated_duration_minutes
+        ));
+        ui.add_space(4.0);
+        egui::Grid::new("job_detail_grid")
+            .num_columns(2)
+            .spacing([24.0, 4.0])
+            .show(ui, |ui| {
+                ui.label("Reward:");
+                ui.label(format!("€{} (profit est. €{})", job.total_reward, job.profit_estimate));
+                ui.end_row();
+                ui.label("Rate:");
+                ui.label(format!("€{:.2}/km", job.calculated_rate_per_km));
+                ui.end_row();
+                ui.label("Urgency / Difficulty:");
+                ui.label(format!("{} / {}", job.urgency_level, job.difficulty_level));
+                ui.end_row();
+                ui.label("Equipment:");
+                ui.label(format!(
+                    "{}{}",
+                    job.equipment_type_required,
+                    job.trailer_type_required
+                        .as_deref()
+                        .map(|t| format!(" ({t})"))
+                        .unwrap_or_default()
+                ));
+                ui.end_row();
+                ui.label("Status:");
+                ui.label(format!(
+                    "{} ({})",
+                    job.status,
+                    job.ets2_job_link_status.as_deref().unwrap_or("-")
+                ));
+                ui.end_row();
+                if let Some(expires) = &job.expires_at_utc {
+                    ui.label("Expires:");
+                    ui.label(expires);
+                    ui.end_row();
+                }
+            });
+        if let Some(note) = &job.risk_note {
+            ui.label(RichText::new(format!("Risk: {note}")).size(11.5).color(theme::WARNING));
+        }
+        if let Some(note) = &job.bonus_note {
+            ui.label(RichText::new(format!("Bonus: {note}")).size(11.5).color(theme::SUCCESS));
+        }
+        if let Some(error) = &job.last_error_message {
+            ui.label(RichText::new(format!("Last error: {error}")).size(11.5).color(theme::DANGER));
+        }
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| {
+            let job_id = job.id.clone();
+            if components::primary_button(ui, "Accept Job").clicked() {
+                match dispatcher_accept_job(
+                    job_id.clone(),
+                    app.career_state(),
+                    app.profile_state(),
+                ) {
+                    Ok(_) => {
+                        refresh_career_data(app);
+                        app.set_status(format!("Accepted job {job_id}."), false);
+                    }
+                    Err(e) => app.set_status(e, true),
+                }
+            }
+            if ui.button("Write to Quicksave").clicked() {
+                match async_runtime::block_on(dispatcher_assign_and_prepare_and_write(
+                    job_id.clone(),
+                    true,
+                    app.app.clone(),
+                    app.career_state(),
+                    app.profile_state(),
+                    app.ets_db_state(),
+                )) {
+                    Ok(dto) => {
+                        refresh_career_data(app);
+                        app.set_status(
+                            format!(
+                                "Job {} written to quicksave (applied={}).",
+                                dto.job.job.id, dto.write_applied
+                            ),
+                            false,
+                        );
+                    }
+                    Err(e) => app.set_status(format!("Write to quicksave failed: {e}"), true),
+                }
+            }
+            if ui.button("Cancel Job").clicked() {
+                let _ = dispatcher_cancel_job(
+                    job_id.clone(),
+                    app.career_state(),
+                    app.profile_state(),
+                );
+                refresh_career_data(app);
+                app.set_status(format!("Cancelled job {job_id}."), false);
+            }
+        });
+    });
+}
+
+/// A clickable table header that toggles sorting by `key`.
+fn dispatcher_sort_header(
+    current: &mut DispatcherSort,
+    ascending: &mut bool,
+    ui: &mut egui::Ui,
+    label: &str,
+    key: DispatcherSort,
+) {
+    let arrow = if *current == key {
+        if *ascending {
+            " ▲"
+        } else {
+            " ▼"
+        }
+    } else {
+        ""
+    };
+    if ui.button(format!("{label}{arrow}")).clicked() {
+        if *current == key {
+            *ascending = !*ascending;
+        } else {
+            *current = key;
+            *ascending = false;
+        }
+    }
 }
 
 fn render_logbook_and_analytics(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {

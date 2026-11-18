@@ -3,6 +3,7 @@ use super::models::{
     ValidateActivePresetModsResult,
 };
 use crate::shared::decrypt::decrypt_if_needed;
+use crate::shared::save_session;
 use chrono::Local;
 use regex::Regex;
 use std::collections::BTreeMap;
@@ -672,7 +673,7 @@ pub fn read_active_mods(path: &Path) -> Result<Vec<u64>, String> {
     read_active_mods_from_text(&text)
 }
 
-pub fn overwrite_active_mods(path: &Path, mod_ids: &[u64]) -> Result<PathBuf, String> {
+pub fn overwrite_active_mods(path: &Path, mod_ids: &[u64]) -> Result<Option<PathBuf>, String> {
     let workshop_mod_ids = mod_ids.iter().map(u64::to_string).collect::<Vec<_>>();
     overwrite_active_preset_mods(path, &workshop_mod_ids).map(|(backup_path, _)| backup_path)
 }
@@ -680,7 +681,7 @@ pub fn overwrite_active_mods(path: &Path, mod_ids: &[u64]) -> Result<PathBuf, St
 pub fn overwrite_active_workshop_mods(
     path: &Path,
     workshop_mod_ids: &[String],
-) -> Result<(PathBuf, usize), String> {
+) -> Result<(Option<PathBuf>, usize), String> {
     let (backup_path, result) = overwrite_active_preset_mods(path, workshop_mod_ids)?;
     Ok((backup_path, result.removed_mod_count))
 }
@@ -688,17 +689,26 @@ pub fn overwrite_active_workshop_mods(
 pub fn overwrite_active_preset_mods(
     path: &Path,
     workshop_mod_ids: &[String],
-) -> Result<(PathBuf, ReplaceActivePresetModsResult), String> {
+) -> Result<(Option<PathBuf>, ReplaceActivePresetModsResult), String> {
     if !path.is_file() {
         return Err(format!("game.sii not found: {}", path.display()));
     }
 
     let text = decrypt_if_needed(path)?;
     let result = replace_active_preset_mods_in_game_sii(&text, workshop_mod_ids)?;
-    let backup_path = backup_game_sii(path)?;
+    // Explicit-save staging: no backup at stage time; the flush creates
+    // the one backup that matters.
+    let backup_path = if save_session::is_staging_enabled() {
+        None
+    } else {
+        Some(backup_game_sii(path)?)
+    };
     println!(
         "[mod-profile-manager] overwrite_active_preset_mods backup_path={} removed_mod_count={} written_mod_count={}",
-        backup_path.display(),
+        backup_path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "(staged)".to_string()),
         result.removed_mod_count,
         result.written_mod_count
     );
@@ -946,6 +956,13 @@ fn detect_workshop_ref_prefix(mod_refs: &[String]) -> &'static str {
 }
 
 fn write_text_atomic(path: &Path, content: &str) -> Result<(), String> {
+    // Explicit-save staging: game.sii edits are held in memory until Save.
+    if save_session::is_staging_enabled()
+        && path.file_name().is_some_and(|name| name == "game.sii")
+    {
+        save_session::stage_save(path, content);
+        return Ok(());
+    }
     let tmp_path = path.with_extension("tmp");
     fs::write(&tmp_path, content).map_err(|error| {
         format!(

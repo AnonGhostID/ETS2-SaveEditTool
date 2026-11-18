@@ -31,6 +31,17 @@ pub fn join_lines(lines: &[String]) -> String {
 }
 
 pub fn write_lines_atomic(path: &Path, lines: &[String]) -> Result<(), AppError> {
+    // Explicit-save staging: hold the edit in memory until Save.
+    // (Only save files stage; every other caller writes through here
+    // with a game.sii/info.sii target.)
+    if crate::shared::save_session::is_staging_enabled()
+        && path
+            .file_name()
+            .is_some_and(|name| name == "game.sii" || name == "info.sii")
+    {
+        crate::shared::save_session::stage_save(path, &join_lines(lines));
+        return Ok(());
+    }
     let tmp_path = path.with_extension("tmp");
     fs::write(&tmp_path, join_lines(lines)).map_err(|error| {
         AppError::new(

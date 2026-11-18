@@ -130,6 +130,18 @@ pub fn decode_text_bytes(
 }
 
 pub fn decrypt_if_needed(path: &Path) -> Result<String, String> {
+    // Explicit-save staging: pending edits overlay the disk file, so the
+    // UI and the next edit both see the staged working copy.
+    if let Some(staged) = crate::shared::save_session::staged_content(path) {
+        return Ok(staged);
+    }
+    decrypt_from_disk(path)
+}
+
+/// Decrypt the save as it is on disk, ignoring any staged edits. Used
+/// for the save-hash check (which guards against external modification
+/// of the disk file) and for anything that must see the disk truth.
+pub fn decrypt_from_disk(path: &Path) -> Result<String, String> {
     let path_buf = path.to_path_buf();
     let mut trace = TraceScope::with_fields(
         "decrypt_if_needed",
@@ -149,6 +161,14 @@ pub fn decrypt_cached(path: &Path, cache: &State<DecryptCache>) -> Result<String
 }
 
 pub fn decrypt_cached_with_cache(path: &Path, cache: &DecryptCache) -> Result<String, String> {
+    // Explicit-save staging: pending edits overlay the disk file. Check
+    // the session before the cache, and never cache staged content —
+    // a Discard must make the disk truth visible again immediately, and
+    // the cache must only ever hold disk content.
+    if let Some(staged) = crate::shared::save_session::staged_content(path) {
+        return Ok(staged);
+    }
+
     if let Some(value) = cached_content(cache, path)? {
         return Ok(value);
     }

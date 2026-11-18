@@ -9,7 +9,8 @@ use crate::features::trailer_change::cache::TrailerChangeSessionCache;
 use crate::features::truck_change::cache::TruckChangeSessionCache;
 use crate::features::truck_change::parser::parse_unit_blocks;
 use crate::shared::current_profile::snapshot_active_save_selection;
-use crate::shared::decrypt::decrypt_cached_with_cache;
+use crate::shared::decrypt::{decrypt_cached_with_cache, decrypt_from_disk};
+use crate::shared::save_session;
 use crate::shared::ets2data::import;
 use crate::shared::ets2data::models::CityQueryFilter;
 use crate::shared::ets2data::validate::sha256_hex_bytes;
@@ -84,7 +85,7 @@ pub fn get_ai_driver_management(
     let game_sii_path = resolve_selected_game_sii(selection)?;
     let content = read_fresh_content(&game_sii_path, decrypt_cache)?;
     verify_ai_driver_consistency(&content)?;
-    let save_hash = sha256_hex_bytes(content.as_bytes());
+    let save_hash = disk_save_hash(&game_sii_path)?;
     let mut management = parse_ai_driver_management_from_sii(&content, selected_game, &save_hash)?;
     enrich_ai_driver_city_data(&content, &mut management, sqlite_path);
     Ok(management)
@@ -123,7 +124,7 @@ fn read_all_garages(
 
     Ok(GarageListResult {
         game: selected_game.to_ascii_lowercase(),
-        save_hash: sha256_hex_bytes(content.as_bytes()),
+        save_hash: disk_save_hash(&game_sii_path)?,
         headquarters_garage_id: parsed.headquarters_garage_id,
         garages: parsed.garages,
         diagnostics: parsed.diagnostics,
@@ -399,7 +400,7 @@ fn mutate_ai_drivers(
     let profile_id = selection_component_id(selection.profile_path.as_deref());
     let save_id = selection_component_id(selection.save_path.as_deref());
     let content = read_fresh_content(&game_sii_path, decrypt_cache)?;
-    let actual_hash = sha256_hex_bytes(content.as_bytes());
+    let actual_hash = disk_save_hash(&game_sii_path)?;
     if actual_hash != expected_save_hash {
         return Err("save_changed_since_load".to_string());
     }
@@ -413,14 +414,26 @@ fn mutate_ai_drivers(
     )?;
 
     ensure_active_context(profile_state, selection, selected_game)?;
-    let backup = backup_service::create_backup_for_targets(
-        profile_state,
-        &format!("ai_driver {action}"),
-        &backup_service::recommended_targets(&game_sii_path),
-    )
-    .map_err(|_| "backup_failed".to_string())?;
-    let pre_write_content = read_fresh_content(&game_sii_path, decrypt_cache)?;
-    if sha256_hex_bytes(pre_write_content.as_bytes()) != actual_hash {
+    // Explicit-save staging: no backup at stage time; the flush creates
+    // the one backup that matters.
+    let backup = if save_session::is_staging_enabled() {
+        None
+    } else {
+        Some(
+            backup_service::create_backup_for_targets(
+                profile_state,
+                &format!("ai_driver {action}"),
+                &backup_service::recommended_targets(&game_sii_path),
+            )
+            .map_err(|_| "backup_failed".to_string())?,
+        )
+    };
+    let backup_id = backup
+        .as_ref()
+        .map(|backup| backup.backup_id.clone())
+        .unwrap_or_default();
+
+    if disk_save_hash(&game_sii_path)? != actual_hash {
         return Err("save_changed_since_load".to_string());
     }
     let verify_candidate = |candidate: &str| {
@@ -435,7 +448,7 @@ fn mutate_ai_drivers(
             truck_change_cache,
             trailer_change_cache,
         );
-        let target_changed = decrypt_cached_with_cache(&game_sii_path, decrypt_cache)
+        let target_changed = decrypt_from_disk(&game_sii_path)
             .map(|current| sha256_hex_bytes(current.as_bytes()) != actual_hash)
             .unwrap_or(true);
         if target_changed {
@@ -447,7 +460,7 @@ fn mutate_ai_drivers(
                 decrypt_cache,
                 truck_change_cache,
                 trailer_change_cache,
-                &backup.backup_id,
+                &backup_id,
                 &actual_hash,
                 "save_write_failed",
                 error,
@@ -479,7 +492,7 @@ fn mutate_ai_drivers(
                 decrypt_cache,
                 truck_change_cache,
                 trailer_change_cache,
-                &backup.backup_id,
+                &backup_id,
                 &actual_hash,
                 "save_verification_failed",
                 "game_sii_not_decrypted_after_write".to_string(),
@@ -501,7 +514,7 @@ fn mutate_ai_drivers(
             decrypt_cache,
             truck_change_cache,
             trailer_change_cache,
-            &backup.backup_id,
+            &backup_id,
             &actual_hash,
             "save_verification_failed",
             error,
@@ -511,15 +524,15 @@ fn mutate_ai_drivers(
             &save_id,
         );
     }
-    let save_hash = sha256_hex_bytes(reloaded.as_bytes());
+    let save_hash = actual_hash.clone();
     let mut management = parse_ai_driver_management_from_sii(&reloaded, selected_game, &save_hash)?;
     enrich_ai_driver_city_data(&reloaded, &mut management, sqlite_path);
-    crate::shared::logs::diagnostic::verified_write("ai_drivers", action, Some(backup.backup_id.clone()), true, false);
+    crate::shared::logs::diagnostic::verified_write("ai_drivers", action, backup.as_ref().map(|backup| backup.backup_id.clone()), true, false);
     Ok(AiDriverMutationResult {
         operation,
         affected_driver_ids: plan.affected_driver_ids,
-        backup_id: backup.backup_id,
-        backup_created: true,
+        backup_id: backup_id.clone(),
+        backup_created: backup.is_some(),
         verified: true,
         save_hash,
         management,
@@ -583,7 +596,7 @@ pub fn buy_all_garages(
     let profile_id = selection_component_id(selection.profile_path.as_deref());
     let save_id = selection_component_id(selection.save_path.as_deref());
     let content = read_fresh_content(&game_sii_path, decrypt_cache)?;
-    let actual_hash = sha256_hex_bytes(content.as_bytes());
+    let actual_hash = disk_save_hash(&game_sii_path)?;
     if actual_hash != request.expected_save_hash {
         return Err("save_changed_since_load".to_string());
     }
@@ -611,7 +624,7 @@ pub fn buy_all_garages(
     if garage_ids.is_empty() {
         ensure_active_context(profile_state, selection, selected_game)?;
         let unchanged = read_fresh_content(&game_sii_path, decrypt_cache)?;
-        if sha256_hex_bytes(unchanged.as_bytes()) != actual_hash {
+        if disk_save_hash(&game_sii_path)? != actual_hash {
             return Err("save_changed_since_load".to_string());
         }
         verify_garage_purchase_batch(&content, &unchanged, &garage_ids)?;
@@ -636,21 +649,31 @@ pub fn buy_all_garages(
         ),
     );
     ensure_active_context(profile_state, selection, selected_game)?;
-    let backup = match backup_service::create_backup_for_targets(
-        profile_state,
-        &format!("garage purchase_all {} garages", garage_ids.len()),
-        &backup_service::recommended_targets(&game_sii_path),
-    ) {
-        Ok(backup) => backup,
-        Err(_) => return Err("backup_failed".to_string()),
+    // Explicit-save staging: no backup at stage time; the flush creates
+    // the one backup that matters.
+    let backup = if save_session::is_staging_enabled() {
+        None
+    } else {
+        match backup_service::create_backup_for_targets(
+            profile_state,
+            &format!("garage purchase_all {} garages", garage_ids.len()),
+            &backup_service::recommended_targets(&game_sii_path),
+        ) {
+            Ok(backup) => Some(backup),
+            Err(_) => return Err("backup_failed".to_string()),
+        }
     };
+    let backup_id = backup
+        .as_ref()
+        .map(|backup| backup.backup_id.clone())
+        .unwrap_or_default();
+
 
     let plan = apply_garage_purchase_batch(&content, &garage_ids)?;
     verify_garage_purchase_batch(&content, &plan.content, &garage_ids)?;
 
     ensure_active_context(profile_state, selection, selected_game)?;
-    let pre_write_content = read_fresh_content(&game_sii_path, decrypt_cache)?;
-    if sha256_hex_bytes(pre_write_content.as_bytes()) != actual_hash {
+    if disk_save_hash(&game_sii_path)? != actual_hash {
         return Err("save_changed_since_load".to_string());
     }
     let verify_candidate = |candidate: &str| {
@@ -665,7 +688,7 @@ pub fn buy_all_garages(
             truck_change_cache,
             trailer_change_cache,
         );
-        let target_changed = decrypt_cached_with_cache(&game_sii_path, decrypt_cache)
+        let target_changed = decrypt_from_disk(&game_sii_path)
             .map(|current| sha256_hex_bytes(current.as_bytes()) != actual_hash)
             .unwrap_or(true);
         if target_changed {
@@ -677,7 +700,7 @@ pub fn buy_all_garages(
                 decrypt_cache,
                 truck_change_cache,
                 trailer_change_cache,
-                &backup.backup_id,
+                &backup_id,
                 &actual_hash,
                 "save_write_failed",
                 error,
@@ -709,7 +732,7 @@ pub fn buy_all_garages(
                 decrypt_cache,
                 truck_change_cache,
                 trailer_change_cache,
-                &backup.backup_id,
+                &backup_id,
                 &actual_hash,
                 "save_verification_failed",
                 "game_sii_not_decrypted".to_string(),
@@ -729,7 +752,7 @@ pub fn buy_all_garages(
             decrypt_cache,
             truck_change_cache,
             trailer_change_cache,
-            &backup.backup_id,
+            &backup_id,
             &actual_hash,
             "save_verification_failed",
             error,
@@ -745,18 +768,18 @@ pub fn buy_all_garages(
         format!(
             "Garage batch purchase verified: profile={profile_id}, save={save_id}, purchased={}, backup_id={}",
             garage_ids.len(),
-            backup.backup_id
+            backup_id.clone()
         ),
     );
     Ok(GarageBuyAllResult {
         operation: GarageBulkOperation::PurchaseAll,
         purchased_count: garage_ids.len(),
         purchased_garage_ids: garage_ids,
-        backup_id: Some(backup.backup_id),
-        backup_created: true,
+        backup_id: backup.as_ref().map(|backup| backup.backup_id.clone()),
+        backup_created: backup.is_some(),
         verified: true,
         financial_transaction_applied: false,
-        save_hash: sha256_hex_bytes(reloaded.as_bytes()),
+        save_hash: actual_hash.clone(),
         warnings: vec!["garage_purchase_all_without_financial_transaction".to_string()],
     })
     })
@@ -788,7 +811,7 @@ pub fn relinquish_empty_garages(
     let profile_id = selection_component_id(selection.profile_path.as_deref());
     let save_id = selection_component_id(selection.save_path.as_deref());
     let content = read_fresh_content(&game_sii_path, decrypt_cache)?;
-    let actual_hash = sha256_hex_bytes(content.as_bytes());
+    let actual_hash = disk_save_hash(&game_sii_path)?;
     if actual_hash != request.expected_save_hash {
         return Err("save_changed_since_load".to_string());
     }
@@ -822,7 +845,7 @@ pub fn relinquish_empty_garages(
     if garage_ids.is_empty() {
         ensure_active_context(profile_state, selection, selected_game)?;
         let unchanged = read_fresh_content(&game_sii_path, decrypt_cache)?;
-        if sha256_hex_bytes(unchanged.as_bytes()) != actual_hash {
+        if disk_save_hash(&game_sii_path)? != actual_hash {
             return Err("save_changed_since_load".to_string());
         }
         verify_garage_relinquishment_batch(&content, &unchanged, &garage_ids)?;
@@ -847,21 +870,31 @@ pub fn relinquish_empty_garages(
         ),
     );
     ensure_active_context(profile_state, selection, selected_game)?;
-    let backup = match backup_service::create_backup_for_targets(
-        profile_state,
-        &format!("garage relinquish_empty {} garages", garage_ids.len()),
-        &backup_service::recommended_targets(&game_sii_path),
-    ) {
-        Ok(backup) => backup,
-        Err(_) => return Err("backup_failed".to_string()),
+    // Explicit-save staging: no backup at stage time; the flush creates
+    // the one backup that matters.
+    let backup = if save_session::is_staging_enabled() {
+        None
+    } else {
+        match backup_service::create_backup_for_targets(
+            profile_state,
+            &format!("garage relinquish_empty {} garages", garage_ids.len()),
+            &backup_service::recommended_targets(&game_sii_path),
+        ) {
+            Ok(backup) => Some(backup),
+            Err(_) => return Err("backup_failed".to_string()),
+        }
     };
+    let backup_id = backup
+        .as_ref()
+        .map(|backup| backup.backup_id.clone())
+        .unwrap_or_default();
+
 
     let plan = apply_garage_relinquishment_batch(&content, &garage_ids)?;
     verify_garage_relinquishment_batch(&content, &plan.content, &garage_ids)?;
 
     ensure_active_context(profile_state, selection, selected_game)?;
-    let pre_write_content = read_fresh_content(&game_sii_path, decrypt_cache)?;
-    if sha256_hex_bytes(pre_write_content.as_bytes()) != actual_hash {
+    if disk_save_hash(&game_sii_path)? != actual_hash {
         return Err("save_changed_since_load".to_string());
     }
     let verify_candidate = |candidate: &str| {
@@ -876,7 +909,7 @@ pub fn relinquish_empty_garages(
             truck_change_cache,
             trailer_change_cache,
         );
-        let target_changed = decrypt_cached_with_cache(&game_sii_path, decrypt_cache)
+        let target_changed = decrypt_from_disk(&game_sii_path)
             .map(|current| sha256_hex_bytes(current.as_bytes()) != actual_hash)
             .unwrap_or(true);
         if target_changed {
@@ -888,7 +921,7 @@ pub fn relinquish_empty_garages(
                 decrypt_cache,
                 truck_change_cache,
                 trailer_change_cache,
-                &backup.backup_id,
+                &backup_id,
                 &actual_hash,
                 "save_write_failed",
                 error,
@@ -920,7 +953,7 @@ pub fn relinquish_empty_garages(
                 decrypt_cache,
                 truck_change_cache,
                 trailer_change_cache,
-                &backup.backup_id,
+                &backup_id,
                 &actual_hash,
                 "save_verification_failed",
                 "game_sii_not_decrypted".to_string(),
@@ -940,7 +973,7 @@ pub fn relinquish_empty_garages(
             decrypt_cache,
             truck_change_cache,
             trailer_change_cache,
-            &backup.backup_id,
+            &backup_id,
             &actual_hash,
             "save_verification_failed",
             error,
@@ -956,18 +989,18 @@ pub fn relinquish_empty_garages(
         format!(
             "Garage empty batch relinquish verified: profile={profile_id}, save={save_id}, relinquished={}, backup_id={}",
             garage_ids.len(),
-            backup.backup_id
+            backup_id.clone()
         ),
     );
     Ok(GarageRelinquishEmptyResult {
         operation: GarageBulkOperation::RelinquishEmpty,
         relinquished_count: garage_ids.len(),
         relinquished_garage_ids: garage_ids,
-        backup_id: Some(backup.backup_id),
-        backup_created: true,
+        backup_id: backup.as_ref().map(|backup| backup.backup_id.clone()),
+        backup_created: backup.is_some(),
         verified: true,
         financial_transaction_applied: false,
-        save_hash: sha256_hex_bytes(reloaded.as_bytes()),
+        save_hash: actual_hash.clone(),
         warnings: vec!["garage_relinquish_empty_without_financial_transaction".to_string()],
     })
     })
@@ -1096,7 +1129,7 @@ pub fn assign_random_garage_resources(
     let save_id = selection_component_id(selection.save_path.as_deref());
     let garage_id = request.garage_id.as_str();
     let content = read_fresh_content(&game_sii_path, decrypt_cache)?;
-    let actual_hash = sha256_hex_bytes(content.as_bytes());
+    let actual_hash = disk_save_hash(&game_sii_path)?;
     if actual_hash != request.expected_save_hash {
         return Err("save_changed_since_load".to_string());
     }
@@ -1120,14 +1153,25 @@ pub fn assign_random_garage_resources(
         ),
     );
     ensure_active_context(profile_state, selection, selected_game)?;
-    let backup = match backup_service::create_backup_for_targets(
-        profile_state,
-        &format!("garage assign_resources {garage_id}"),
-        &backup_service::recommended_targets(&game_sii_path),
-    ) {
-        Ok(backup) => backup,
-        Err(_) => return Err("backup_failed".to_string()),
+    // Explicit-save staging: no backup at stage time; the flush creates
+    // the one backup that matters.
+    let backup = if save_session::is_staging_enabled() {
+        None
+    } else {
+        match backup_service::create_backup_for_targets(
+            profile_state,
+            &format!("garage assign_resources {garage_id}"),
+            &backup_service::recommended_targets(&game_sii_path),
+        ) {
+            Ok(backup) => Some(backup),
+            Err(_) => return Err("backup_failed".to_string()),
+        }
     };
+    let backup_id = backup
+        .as_ref()
+        .map(|backup| backup.backup_id.clone())
+        .unwrap_or_default();
+
 
     let assignment_options = GarageResourceAssignmentOptions {
         assign_random_driver: request.assign_random_driver,
@@ -1144,8 +1188,7 @@ pub fn assign_random_garage_resources(
         verify_garage_resource_assignment(&content, &plan.content, garage_id, &verification_spec)?;
 
     ensure_active_context(profile_state, selection, selected_game)?;
-    let pre_write_content = read_fresh_content(&game_sii_path, decrypt_cache)?;
-    if sha256_hex_bytes(pre_write_content.as_bytes()) != actual_hash {
+    if disk_save_hash(&game_sii_path)? != actual_hash {
         return Err("save_changed_since_load".to_string());
     }
     let verify_candidate = |candidate: &str| {
@@ -1161,7 +1204,7 @@ pub fn assign_random_garage_resources(
             truck_change_cache,
             trailer_change_cache,
         );
-        let target_changed = decrypt_cached_with_cache(&game_sii_path, decrypt_cache)
+        let target_changed = decrypt_from_disk(&game_sii_path)
             .map(|current| sha256_hex_bytes(current.as_bytes()) != actual_hash)
             .unwrap_or(true);
         if target_changed {
@@ -1173,7 +1216,7 @@ pub fn assign_random_garage_resources(
                 decrypt_cache,
                 truck_change_cache,
                 trailer_change_cache,
-                &backup.backup_id,
+                &backup_id,
                 &actual_hash,
                 "save_write_failed",
                 error,
@@ -1205,7 +1248,7 @@ pub fn assign_random_garage_resources(
                 decrypt_cache,
                 truck_change_cache,
                 trailer_change_cache,
-                &backup.backup_id,
+                &backup_id,
                 &actual_hash,
                 "save_verification_failed",
                 "game_sii_not_decrypted".to_string(),
@@ -1229,7 +1272,7 @@ pub fn assign_random_garage_resources(
                     decrypt_cache,
                     truck_change_cache,
                     trailer_change_cache,
-                    &backup.backup_id,
+                    &backup_id,
                     &actual_hash,
                     "save_verification_failed",
                     error,
@@ -1258,7 +1301,7 @@ pub fn assign_random_garage_resources(
         "Garages",
         format!(
             "Garage random assignment verified: profile={profile_id}, save={save_id}, garage={garage_id}, assigned_driver={:?}, assigned_truck={:?}, backup_id={}",
-            plan.assigned_driver_id, plan.assigned_truck_id, backup.backup_id
+            plan.assigned_driver_id, plan.assigned_truck_id, backup_id.clone()
         ),
     );
 
@@ -1267,11 +1310,11 @@ pub fn assign_random_garage_resources(
         operation: GarageOperation::AssignResources,
         previous_state,
         updated_state,
-        backup_id: backup.backup_id,
-        backup_created: true,
+        backup_id: backup_id.clone(),
+        backup_created: backup.is_some(),
         verified: true,
         financial_transaction_applied: false,
-        save_hash: sha256_hex_bytes(reloaded.as_bytes()),
+        save_hash: actual_hash.clone(),
         assigned_driver_id: plan.assigned_driver_id,
         assigned_truck_id: plan.assigned_truck_id,
         assigned_driver_slot_index: plan.assigned_driver_slot_index,
@@ -1315,7 +1358,7 @@ fn mutate_garage(
     let profile_id = selection_component_id(selection.profile_path.as_deref());
     let save_id = selection_component_id(selection.save_path.as_deref());
     let content = read_fresh_content(&game_sii_path, decrypt_cache)?;
-    let actual_hash = sha256_hex_bytes(content.as_bytes());
+    let actual_hash = disk_save_hash(&game_sii_path)?;
     if actual_hash != expected_save_hash {
         return Err("save_changed_since_load".to_string());
     }
@@ -1347,29 +1390,41 @@ fn mutate_garage(
         ),
     );
     ensure_active_context(profile_state, selection, selected_game)?;
-    let backup = match backup_service::create_backup_for_targets(
-        profile_state,
-        &format!("garage {action} {garage_id}"),
-        &backup_service::recommended_targets(&game_sii_path),
-    ) {
-        Ok(backup) => backup,
-        Err(_) => {
-            let _ = user_log::user_log_error(
-                "Garages",
-                format!(
-                    "Garage backup failed: profile={profile_id}, save={save_id}, garage={garage_id}, action={action}"
-                ),
-            );
-            return Err("backup_failed".to_string());
+    // Explicit-save staging: no backup at stage time; the flush creates
+    // the one backup that matters.
+    let backup = if save_session::is_staging_enabled() {
+        None
+    } else {
+        match backup_service::create_backup_for_targets(
+            profile_state,
+            &format!("garage {action} {garage_id}"),
+            &backup_service::recommended_targets(&game_sii_path),
+        ) {
+            Ok(backup) => Some(backup),
+            Err(_) => {
+                let _ = user_log::user_log_error(
+                    "Garages",
+                    format!(
+                        "Garage backup failed: profile={profile_id}, save={save_id}, garage={garage_id}, action={action}"
+                    ),
+                );
+                return Err("backup_failed".to_string());
+            }
         }
     };
-    let _ = user_log::user_log_info(
-        "Garages",
-        format!(
-            "Garage backup created: profile={profile_id}, save={save_id}, garage={garage_id}, action={action}, backup_id={}",
-            backup.backup_id
-        ),
-    );
+    let backup_id = backup
+        .as_ref()
+        .map(|backup| backup.backup_id.clone())
+        .unwrap_or_default();
+    if backup.is_some() {
+        let _ = user_log::user_log_info(
+            "Garages",
+            format!(
+                "Garage backup created: profile={profile_id}, save={save_id}, garage={garage_id}, action={action}, backup_id={}",
+                backup_id
+            ),
+        );
+    }
 
     let plan = if matches!(operation, GarageOperation::Relinquish) {
         apply_garage_relinquishment(&content, garage_id)?
@@ -1391,8 +1446,7 @@ fn mutate_garage(
     );
 
     ensure_active_context(profile_state, selection, selected_game)?;
-    let pre_write_content = read_fresh_content(&game_sii_path, decrypt_cache)?;
-    if sha256_hex_bytes(pre_write_content.as_bytes()) != actual_hash {
+    if disk_save_hash(&game_sii_path)? != actual_hash {
         return Err("save_changed_since_load".to_string());
     }
     let verify_candidate = |candidate: &str| {
@@ -1413,7 +1467,7 @@ fn mutate_garage(
             truck_change_cache,
             trailer_change_cache,
         );
-        let target_changed = decrypt_cached_with_cache(&game_sii_path, decrypt_cache)
+        let target_changed = decrypt_from_disk(&game_sii_path)
             .map(|current| sha256_hex_bytes(current.as_bytes()) != actual_hash)
             .unwrap_or(true);
         if target_changed {
@@ -1425,7 +1479,7 @@ fn mutate_garage(
                 decrypt_cache,
                 truck_change_cache,
                 trailer_change_cache,
-                &backup.backup_id,
+                &backup_id,
                 &actual_hash,
                 "save_write_failed",
                 error,
@@ -1463,7 +1517,7 @@ fn mutate_garage(
                 decrypt_cache,
                 truck_change_cache,
                 trailer_change_cache,
-                &backup.backup_id,
+                &backup_id,
                 &actual_hash,
                 "save_verification_failed",
                 "game_sii_not_decrypted".to_string(),
@@ -1486,7 +1540,7 @@ fn mutate_garage(
                     decrypt_cache,
                     truck_change_cache,
                     trailer_change_cache,
-                    &backup.backup_id,
+                    &backup_id,
                     &actual_hash,
                     "save_verification_failed",
                     error,
@@ -1531,7 +1585,7 @@ fn mutate_garage(
         format!(
             "Garage mutation verified: profile={profile_id}, save={save_id}, garage={garage_id}, action={action}, actual_after={}, backup_id={}, writer=ok, verification=ok",
             garage_state_summary(&updated_state),
-            backup.backup_id
+            backup_id.clone()
         ),
     );
 
@@ -1540,11 +1594,11 @@ fn mutate_garage(
         operation,
         previous_state,
         updated_state,
-        backup_id: backup.backup_id,
-        backup_created: true,
+        backup_id: backup_id.clone(),
+        backup_created: backup.is_some(),
         verified: true,
         financial_transaction_applied: false,
-        save_hash: sha256_hex_bytes(reloaded.as_bytes()),
+        save_hash: actual_hash.clone(),
         assigned_driver_id: None,
         assigned_truck_id: None,
         assigned_driver_slot_index: None,
@@ -1556,6 +1610,14 @@ fn mutate_garage(
 fn read_fresh_content(path: &Path, decrypt_cache: &DecryptCache) -> Result<String, String> {
     decrypt_cache.invalidate_path(path);
     decrypt_cached_with_cache(path, decrypt_cache).map_err(|_| "game_sii_not_decrypted".to_string())
+}
+
+/// Hash of the save as it is ON DISK (ignoring staged edits). The
+/// save-hash checks guard against external modification of the disk
+/// file, so they must not trip on the user's own staged edits.
+fn disk_save_hash(game_sii_path: &Path) -> Result<String, String> {
+    let disk_content = decrypt_from_disk(game_sii_path)?;
+    Ok(sha256_hex_bytes(disk_content.as_bytes()))
 }
 
 fn ensure_active_context(

@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::features::ets2save::errors::{AppError, AppErrorCode};
 use crate::features::ets2save::sii_codec::replace_file_atomic;
+use crate::shared::save_session;
 
 use super::parser::{extract_field_value, parse_unit_blocks};
 
@@ -89,6 +90,12 @@ pub fn write_verified_content(
     verify_temp: impl Fn(&str) -> Result<(), String>,
 ) -> Result<(), String> {
     verify_temp(content)?;
+
+    // Explicit-save staging: hold the edit in memory until Save.
+    if save_session::is_staging_enabled() {
+        save_session::stage_save(target_path, content);
+        return Ok(());
+    }
 
     let tmp_path = temp_path_for(target_path);
     fs::write(&tmp_path, content)

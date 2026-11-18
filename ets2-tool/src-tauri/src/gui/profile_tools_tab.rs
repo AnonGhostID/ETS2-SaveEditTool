@@ -18,24 +18,25 @@ use crate::gui::{Ets2NativeApp, ProfileToolsSubTab};
 use crate::tauri::async_runtime;
 
 pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
-    components::page_header(
-        ui,
-        "Profiles & Backups",
-        "Clone, share and repair profiles; inspect save health and restore backups.",
-    );
-    ui.add_space(8.0);
-    if let Some(sub) = components::sub_tabs(
-        ui,
-        app.profile_tools_sub_tab,
-        &[
-            (ProfileToolsSubTab::CloneAndRename, "Clone & Rename"),
-            (ProfileToolsSubTab::ProfileSharing, "Profile Sharing"),
-            (ProfileToolsSubTab::SaveHealth, "Save Health"),
-            (ProfileToolsSubTab::BackupsAndRestore, "Backups & Restore"),
-        ],
-    ) {
-        app.profile_tools_sub_tab = sub;
-    }
+    let (title, subtitle) = match app.profile_tools_sub_tab {
+        ProfileToolsSubTab::CloneAndRename => (
+            "Clone & Rename",
+            "Duplicate the active profile or give it a new name.",
+        ),
+        ProfileToolsSubTab::ProfileSharing => (
+            "Profile Sharing",
+            "Export a profile as a shareable archive, or import one.",
+        ),
+        ProfileToolsSubTab::SaveHealth => (
+            "Save Health",
+            "Check the active save for problems and fix what can be fixed.",
+        ),
+        ProfileToolsSubTab::BackupsAndRestore => (
+            "Backups & Restore",
+            "Snapshots of your saves — restore one when something goes wrong.",
+        ),
+    };
+    components::page_header(ui, title, subtitle);
     ui.add_space(8.0);
 
     match app.profile_tools_sub_tab {
@@ -319,57 +320,47 @@ fn render_backups_and_restore(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             Err(e) => app.set_status(e, true),
         }
     }
+    ui.add_space(6.0);
 
+    if app.backups_list.is_empty() {
+        components::empty_state(
+            ui,
+            "No backups listed",
+            "List the active save's backups to inspect or restore one.",
+        );
+        return;
+    }
+
+    // Selectable table; the detail card below shows the preview and the
+    // Restore action for the selected backup.
     egui::Grid::new("backups_grid")
         .striped(true)
-        .num_columns(6)
+        .num_columns(5)
         .show(ui, |ui| {
             ui.strong("Backup ID");
             ui.strong("Created At (UTC)");
             ui.strong("Type");
             ui.strong("Reason");
             ui.strong("Files");
-            ui.strong("Actions");
             ui.end_row();
 
             for b in app.backups_list.clone() {
-                ui.label(&b.backup_id);
+                let selected = app.selected_backup_id == b.backup_id;
+                if ui.selectable_label(selected, &b.backup_id).clicked() {
+                    app.selected_backup_id = b.backup_id.clone();
+                    app.backup_preview =
+                        preview_backup_restore(b.backup_id.clone(), app.profile_state()).ok();
+                }
                 ui.label(&b.created_at_utc);
                 ui.label(&b.backup_type);
                 ui.label(&b.action_reason);
                 ui.label(format!("{}", b.file_count));
-                ui.horizontal(|ui| {
-                    if ui.small_button("Preview Diff").clicked() {
-                        app.backup_preview =
-                            preview_backup_restore(b.backup_id.clone(), app.profile_state()).ok();
-                    }
-                    if ui.small_button("⏪ Restore Backup").clicked() {
-                        match restore_backup(
-                            b.backup_id.clone(),
-                            true,
-                            app.profile_state(),
-                            app.profile_cache(),
-                            app.decrypt_cache(),
-                        ) {
-                            Ok(res) => {
-                                app.reload_active_save_data();
-                                app.set_status(
-                                    format!(
-                                        "Restored {} files from backup {}.",
-                                        res.restored_file_count, res.backup_id
-                                    ),
-                                    false,
-                                );
-                            }
-                            Err(e) => app.set_status(e, true),
-                        }
-                    }
-                });
                 ui.end_row();
             }
         });
 
-    if let Some(prev) = &app.backup_preview {
+    if let Some(prev) = app.backup_preview.clone() {
+        ui.add_space(10.0);
         ui.separator();
         ui.card(|ui| {
             ui.heading(format!("Backup Restore Preview: {}", prev.backup_id));
@@ -380,6 +371,53 @@ fn render_backups_and_restore(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     f.relative_path, f.change_count, f.status
                 ));
             }
+            ui.add_space(8.0);
+            if ui.button("Restore This Backup").clicked() {
+                app.backup_confirm = Some(prev.backup_id.clone());
+            }
         });
+    }
+
+    render_backup_confirm(app, ui);
+}
+
+fn render_backup_confirm(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
+    let Some(backup_id) = app.backup_confirm.clone() else {
+        return;
+    };
+    let message = format!(
+        "Restore backup {backup_id}? This overwrites the current save with the backup's files. Your current state is kept as a backup first."
+    );
+    match components::confirm_dialog(
+        ui.ctx(),
+        "Restore backup",
+        &message,
+        "Restore",
+        "Cancel",
+    ) {
+        Some(true) => {
+            app.backup_confirm = None;
+            match restore_backup(
+                backup_id,
+                true,
+                app.profile_state(),
+                app.profile_cache(),
+                app.decrypt_cache(),
+            ) {
+                Ok(res) => {
+                    app.reload_active_save_data();
+                    app.set_status(
+                        format!(
+                            "Restored {} files from backup {}.",
+                            res.restored_file_count, res.backup_id
+                        ),
+                        false,
+                    );
+                }
+                Err(e) => app.set_status(e, true),
+            }
+        }
+        Some(false) => app.backup_confirm = None,
+        None => {}
     }
 }

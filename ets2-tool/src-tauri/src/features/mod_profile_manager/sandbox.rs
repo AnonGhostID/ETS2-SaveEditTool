@@ -300,12 +300,17 @@ pub fn apply_sandbox_to_active_profile_with_force(
         sii_mods::overwrite_active_preset_mods(&game_sii, &workshop_mod_ids)?;
     println!(
         "[mod-profile-manager] apply backup_path={} removed_existing_mod_count={} new_mod_count={} expected_mod_refs={:?}",
-        backup_path.display(),
+        backup_path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "(staged)".to_string()),
         replace_result.removed_mod_count,
         replace_result.written_mod_count,
         replace_result.expected_mod_refs
     );
-    let reapplied_content = fs::read_to_string(&game_sii)
+    // Re-read through the decrypt path (not raw disk) so validation sees
+    // staged edits while explicit-save staging is on.
+    let reapplied_content = decrypt_if_needed(&game_sii)
         .map_err(|error| format!("Failed to re-read {}: {}", game_sii.display(), error));
     let (validation, success, message) = match reapplied_content {
         Ok(content) => {
@@ -371,7 +376,10 @@ pub fn apply_sandbox_to_active_profile_with_force(
         sandbox_id: sandbox.id.clone(),
         sandbox_title: sandbox.title.clone(),
         game_sii_path: game_sii.display().to_string(),
-        backup_path: backup_path.display().to_string(),
+        backup_path: backup_path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "(staged)".to_string()),
         applied_mods,
         skipped_mods,
         removed_existing_mod_count,

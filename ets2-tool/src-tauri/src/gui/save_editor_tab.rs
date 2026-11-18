@@ -1,14 +1,13 @@
 use eframe::egui::{self, Color32, RichText};
 
-use crate::features::save_editor::coaches::Career;
 use crate::features::save_editor::commands::{
-    KeyValuePayload, apply_custom_reset_values, edit_career_xp, edit_config_value,
-    edit_console_value, edit_convoy_value, edit_developer_value, edit_level,
-    edit_parking_doubles_value, edit_player_experience, edit_player_money, edit_save_config_value,
-    edit_skill_value, edit_traffic_value, read_project_coaches,
+    KeyValuePayload, apply_custom_reset_values, edit_config_value, edit_console_value,
+    edit_convoy_value, edit_developer_value, edit_level, edit_parking_doubles_value,
+    edit_player_experience, edit_player_money, edit_save_config_value, edit_skill_value,
+    edit_traffic_value, read_project_coaches,
 };
 use crate::gui::components::{self, UiExt};
-use crate::gui::Ets2NativeApp;
+use crate::gui::{Ets2NativeApp, WorkspaceTab};
 
 pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
     components::page_header(
@@ -20,7 +19,15 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
     ui.horizontal_wrapped(|ui| {
         if components::primary_button(ui, "Refresh Save Data").clicked() {
             app.reload_active_save_data();
-            app.coaches_snapshot = read_project_coaches(app.profile_state()).ok();
+            match read_project_coaches(app.profile_state()) {
+                Ok(snapshot) => {
+                    // Keep the Coaches tab's XP editor in sync with the
+                    // freshly loaded snapshot (same as its own Load button).
+                    app.edit_bus_xp_input = snapshot.bus_xp.unwrap_or(0);
+                    app.coaches_snapshot = Some(snapshot);
+                }
+                Err(_) => app.coaches_snapshot = None,
+            }
             app.set_status("Refreshed active save and config values.", false);
         }
     });
@@ -40,13 +47,43 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
         cols[0].card(|ui| {
             ui.heading("Player Economy & Experience");
             if let Some(data) = &app.save_data {
-                ui.label(format!(
-                    "Current Money: €{} | Current XP: {} | Visited Cities: {} | Dealers: {}",
-                    data.money.unwrap_or(0),
-                    data.xp.unwrap_or(0),
-                    data.visited_cities.unwrap_or(0),
-                    data.dealers.unwrap_or(0)
-                ));
+                let level = data
+                    .xp
+                    .map(|xp| {
+                        crate::xp::command::calculate_level(xp.max(0) as u64)
+                            .level
+                            .to_string()
+                    })
+                    .unwrap_or_else(|| "-".to_string());
+                ui.columns(2, |cols| {
+                    components::stat_tile(
+                        &mut cols[0],
+                        "Money",
+                        &format!("€{}", data.money.unwrap_or(0)),
+                        crate::gui::theme::SUCCESS,
+                    );
+                    components::stat_tile(
+                        &mut cols[1],
+                        "Total XP",
+                        &data.xp.unwrap_or(0).to_string(),
+                        crate::gui::theme::ACCENT,
+                    );
+                });
+                ui.add_space(6.0);
+                ui.columns(2, |cols| {
+                    components::stat_tile(
+                        &mut cols[0],
+                        "Level",
+                        &level,
+                        crate::gui::theme::ACCENT,
+                    );
+                    components::stat_tile(
+                        &mut cols[1],
+                        "Visited Cities",
+                        &data.visited_cities.unwrap_or(0).to_string(),
+                        crate::gui::theme::MUTED,
+                    );
+                });
             }
             ui.add_space(6.0);
 
@@ -95,7 +132,7 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
 
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                ui.label("Experience (XP):");
+                ui.label("Truck XP:");
                 ui.add(
                     egui::DragValue::new(&mut app.edit_xp_input)
                         .speed(1_000)
@@ -325,83 +362,73 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             });
 
             ui.separator();
-            ui.label(RichText::new("Custom Global `config.cfg` Key/Value").strong());
-            ui.horizontal(|ui| {
-                ui.label("Key:");
-                ui.text_edit_singleline(&mut app.custom_cfg_key);
-                ui.label("Value:");
-                ui.text_edit_singleline(&mut app.custom_cfg_value);
-                if ui.button("Set").clicked() && !app.custom_cfg_key.trim().is_empty() {
-                    match edit_config_value(
-                        KeyValuePayload {
-                            key: app.custom_cfg_key.trim().to_string(),
-                            value: app.custom_cfg_value.trim().to_string(),
-                        },
-                        app.profile_state(),
-                        app.profile_cache(),
-                        app.decrypt_cache(),
-                    ) {
-                        Ok(()) => app.set_status("Updated global config.cfg key.", false),
-                        Err(e) => app.set_status(e, true),
-                    }
-                }
-            });
+            egui::CollapsingHeader::new("Advanced: custom config keys")
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.label(RichText::new("Custom Global `config.cfg` Key/Value").strong());
+                    ui.horizontal(|ui| {
+                        ui.label("Key:");
+                        ui.text_edit_singleline(&mut app.custom_cfg_key);
+                        ui.label("Value:");
+                        ui.text_edit_singleline(&mut app.custom_cfg_value);
+                        if ui.button("Set").clicked() && !app.custom_cfg_key.trim().is_empty() {
+                            match edit_config_value(
+                                KeyValuePayload {
+                                    key: app.custom_cfg_key.trim().to_string(),
+                                    value: app.custom_cfg_value.trim().to_string(),
+                                },
+                                app.profile_state(),
+                                app.profile_cache(),
+                                app.decrypt_cache(),
+                            ) {
+                                Ok(()) => app.set_status("Updated global config.cfg key.", false),
+                                Err(e) => app.set_status(e, true),
+                            }
+                        }
+                    });
 
-            ui.label(RichText::new("Custom Profile `config.cfg` Key/Value").strong());
-            ui.horizontal(|ui| {
-                ui.label("Key:");
-                ui.text_edit_singleline(&mut app.custom_save_cfg_key);
-                ui.label("Value:");
-                ui.text_edit_singleline(&mut app.custom_save_cfg_value);
-                if ui.button("Set").clicked() && !app.custom_save_cfg_key.trim().is_empty() {
-                    match edit_save_config_value(
-                        KeyValuePayload {
-                            key: app.custom_save_cfg_key.trim().to_string(),
-                            value: app.custom_save_cfg_value.trim().to_string(),
-                        },
-                        app.profile_state(),
-                        app.profile_cache(),
-                        app.decrypt_cache(),
-                    ) {
-                        Ok(()) => app.set_status("Updated profile config.cfg key.", false),
-                        Err(e) => app.set_status(e, true),
-                    }
-                }
-            });
+                    ui.label(RichText::new("Custom Profile `config.cfg` Key/Value").strong());
+                    ui.horizontal(|ui| {
+                        ui.label("Key:");
+                        ui.text_edit_singleline(&mut app.custom_save_cfg_key);
+                        ui.label("Value:");
+                        ui.text_edit_singleline(&mut app.custom_save_cfg_value);
+                        if ui.button("Set").clicked() && !app.custom_save_cfg_key.trim().is_empty()
+                        {
+                            match edit_save_config_value(
+                                KeyValuePayload {
+                                    key: app.custom_save_cfg_key.trim().to_string(),
+                                    value: app.custom_save_cfg_value.trim().to_string(),
+                                },
+                                app.profile_state(),
+                                app.profile_cache(),
+                                app.decrypt_cache(),
+                            ) {
+                                Ok(()) => {
+                                    app.set_status("Updated profile config.cfg key.", false)
+                                }
+                                Err(e) => app.set_status(e, true),
+                            }
+                        }
+                    });
+                });
 
             ui.separator();
             ui.horizontal(|ui| {
-                ui.heading("Project Coaches / Bus Career XP");
-                if ui.small_button("Inspect Coaches").clicked() {
-                    match read_project_coaches(app.profile_state()) {
-                        Ok(snap) => app.coaches_snapshot = Some(snap),
-                        Err(e) => app.set_status(format!("Coaches inspect: {e}"), true),
-                    }
+                ui.heading("Project Coaches / Bus Career");
+                if let Some(coaches) = &app.coaches_snapshot {
+                    ui.label(format!(
+                        "Bus XP: {} · Discovered Stops: {}",
+                        coaches
+                            .bus_xp
+                            .map(|xp| xp.to_string())
+                            .unwrap_or_else(|| "—".to_string()),
+                        coaches.discovered_stops
+                    ));
                 }
             });
-            if let Some(coaches) = app.coaches_snapshot.clone() {
-                ui.label(format!(
-                    "Truck XP: {:?} | Bus XP: {:?} | Discovered Bus Stops: {}",
-                    coaches.truck_xp, coaches.bus_xp, coaches.discovered_stops
-                ));
-                ui.horizontal(|ui| {
-                    if ui.button("Sync XP to Bus Career").clicked() {
-                        match edit_career_xp(
-                            app.edit_xp_input,
-                            Career::Bus,
-                            coaches.save_hash.clone(),
-                            app.profile_state(),
-                            app.profile_cache(),
-                            app.decrypt_cache(),
-                        ) {
-                            Ok(()) => {
-                                app.coaches_snapshot = read_project_coaches(app.profile_state()).ok();
-                                app.set_status("Updated Bus Career XP.", false);
-                            }
-                            Err(e) => app.set_status(e, true),
-                        }
-                    }
-                });
+            if ui.button("Open Coaches →").clicked() {
+                app.active_tab = WorkspaceTab::Coaches;
             }
         });
     });

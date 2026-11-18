@@ -10,6 +10,7 @@ use crate::shared::current_profile::{require_current_profile, require_current_sa
 use crate::shared::decrypt::decrypt_cached;
 use crate::shared::hex_float::float_to_hex;
 use crate::shared::paths::game_sii_from_save;
+use crate::shared::save_session;
 use crate::shared::regex_helper::cragex;
 use crate::state::{AppProfileState, DecryptCache, ProfileCache};
 use regex::{Captures, Regex};
@@ -44,6 +45,13 @@ fn write_save_content(
     success_message: &str,
 ) -> Result<(), String> {
     let path_buf = PathBuf::from(path);
+    // Explicit-save staging: hold the edit in memory until Save.
+    if save_session::is_staging_enabled()
+        && path_buf.file_name().is_some_and(|name| name == "game.sii")
+    {
+        save_session::stage_save(&path_buf, content);
+        return Ok(());
+    }
     let mut context = logging_service::resolve_active_context(profile_state);
     context.extra.insert(
         "target".to_string(),

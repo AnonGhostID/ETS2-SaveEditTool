@@ -1,4 +1,7 @@
-use super::coaches::{Career, patch_xp, read_snapshot, save_hash, verify_xp};
+use super::coaches::{
+    display_bus_name, display_job_stop_name, display_stop_name, patch_xp, read_snapshot,
+    save_hash, verify_xp, Career,
+};
 
 fn fixture() -> String {
     "SiiNunit\n{\n\
@@ -257,4 +260,49 @@ fn saving_bus_then_truck_keeps_both_careers_and_other_units_independent() {
     assert_eq!(snapshot.truck_xp, Some(50000));
     assert_eq!(snapshot.bus_xp, Some(1234));
     assert_eq!(snapshot.discovered_stops, 2);
+}
+
+#[test]
+fn job_log_entries_are_parsed_with_totals() {
+    let base = fixture().replace(
+        "bus_job_log : log.bus {\n version: 0\n entries: 0\n}",
+        "bus_job_log : log.bus {\n version: 0\n entries: 2\n entries[0]: entry.one\n entries[1]: entry.two\n}",
+    );
+    let base = base.strip_suffix("}\n").unwrap();
+    let content = format!(
+        "{base}\
+bus_job_log_entry : entry.one {{\n flags: 1\n type: quick_job\n assigned_bus: \"vehicle.volvo.9700_23\"\n source_bus_stop_name: \"city.wien\"\n target_bus_stop_name: \"city.bratislava\"\n stage_count: 1\n exp_delta: 0\n reward: 1965\n travelled_distance: 91\n start_time: 20530\n end_time: 20649\n total_passengers: 31\n}}\n\
+bus_job_log_entry : entry.two {{\n flags: 1\n type: quick_job\n assigned_bus: \"vehicle.volvo.9700_23\"\n source_bus_stop_name: \"city.warszawa\"\n target_bus_stop_name: \"city.lodz\"\n stage_count: 1\n exp_delta: 86\n reward: 2115\n travelled_distance: 101\n start_time: 21200\n}}\n}}\n"
+    );
+    let snapshot = read_snapshot(&content).unwrap();
+    assert_eq!(snapshot.total_bus_jobs, 2);
+    assert_eq!(snapshot.total_bus_exp, 86);
+    assert_eq!(snapshot.total_bus_reward, 1965 + 2115);
+    assert_eq!(snapshot.total_bus_passengers, 31);
+    assert_eq!(snapshot.total_bus_distance, 192.0);
+    let entries = &snapshot.job_logs[0].entries_detail;
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].source_stop.as_deref(), Some("city.wien"));
+    assert_eq!(entries[0].target_stop.as_deref(), Some("city.bratislava"));
+    assert_eq!(
+        entries[0].assigned_bus.as_deref(),
+        Some("vehicle.volvo.9700_23")
+    );
+    assert_eq!(entries[0].job_type.as_deref(), Some("quick_job"));
+    assert_eq!(entries[0].exp_delta, Some(0));
+    assert_eq!(entries[0].total_passengers, Some(31));
+    assert_eq!(entries[1].exp_delta, Some(86));
+    assert_eq!(entries[1].reward, Some(2115));
+}
+
+#[test]
+fn display_names_prettify_ids() {
+    assert_eq!(display_stop_name("bus_stop.city.helsinki"), "Helsinki");
+    assert_eq!(display_stop_name("bus_stop.city.novi_sad"), "Novi Sad");
+    assert_eq!(
+        display_stop_name("bus_stop.viewpoints.pocbodo"),
+        "Pocbodo (viewpoint)"
+    );
+    assert_eq!(display_bus_name("vehicle.volvo.9700_23"), "Volvo 9700 23");
+    assert_eq!(display_job_stop_name("city.wien"), "Wien");
 }

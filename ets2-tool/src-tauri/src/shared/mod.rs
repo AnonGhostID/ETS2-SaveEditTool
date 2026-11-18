@@ -9,6 +9,7 @@ pub mod logs;
 pub mod models;
 pub mod paths;
 pub mod regex_helper;
+pub mod save_session;
 pub mod sii_parser;
 pub mod sqlite_schema;
 pub mod trace;
