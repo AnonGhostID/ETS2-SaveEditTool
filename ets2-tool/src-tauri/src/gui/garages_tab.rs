@@ -242,7 +242,7 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     sort_header(app, ui, "Drivers / Trucks", GarageSortKey::Drivers)
                 });
             })
-            .body(|mut body| {
+            .body(|body| {
                 body.rows(20.0, visible.len(), |mut row| {
                     let g = &visible[row.index()];
                     let selected =

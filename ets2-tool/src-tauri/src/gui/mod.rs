@@ -1338,7 +1338,7 @@ impl Ets2NativeApp {
 
         egui::Frame::none()
             .fill(theme::SURFACE)
-            .stroke(egui::Stroke::new(1.0, theme::BORDER))
+            .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
             .rounding(egui::Rounding::same(10.0))
             .inner_margin(egui::Margin::symmetric(16.0, 14.0))
             .show(ui, |ui| {
@@ -1725,7 +1725,7 @@ impl eframe::App for Ets2NativeApp {
                 egui::Frame::none()
                     .fill(theme::SIDEBAR)
                     .inner_margin(egui::Margin::symmetric(18.0, 7.0))
-                    .stroke(egui::Stroke::new(1.0, theme::BORDER)),
+                    .stroke(egui::Stroke::new(1.0_f32, theme::BORDER)),
             )
             .show(ctx, |ui| {
                 self.render_top_bar(ui);
@@ -1747,7 +1747,7 @@ impl eframe::App for Ets2NativeApp {
                         for (index, toast) in self.toasts.iter().enumerate() {
                             egui::Frame::none()
                                 .fill(theme::SURFACE)
-                                .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                                .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
                                 .rounding(egui::Rounding::same(8.0))
                                 .inner_margin(egui::Margin::symmetric(12.0, 8.0))
                                 .show(ui, |ui| {

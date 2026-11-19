@@ -15,7 +15,7 @@ impl UiExt for Ui {
     fn card<R>(&mut self, add_contents: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
         Frame::none()
             .fill(theme::SURFACE)
-            .stroke(Stroke::new(1.0, theme::BORDER))
+            .stroke(Stroke::new(1.0_f32, theme::BORDER))
             .rounding(Rounding::same(10.0))
             .inner_margin(Margin::same(16.0))
             .show(self, add_contents)
@@ -125,7 +125,7 @@ pub fn sub_tabs<T: Copy + PartialEq>(ui: &mut Ui, current: T, items: &[(T, &str)
 pub fn stat_tile(ui: &mut Ui, label: &str, value: &str, accent: Color32) {
     Frame::none()
         .fill(theme::SURFACE)
-        .stroke(Stroke::new(1.0, theme::BORDER))
+        .stroke(Stroke::new(1.0_f32, theme::BORDER))
         .rounding(Rounding::same(10.0))
         .inner_margin(Margin::symmetric(14.0, 12.0))
         .show(ui, |ui| {
@@ -175,7 +175,7 @@ pub fn action_card(ui: &mut Ui, title: &str, description: &str, button: &str) ->
 
     Frame::none()
         .fill(theme::SURFACE)
-        .stroke(Stroke::new(1.0, theme::BORDER))
+        .stroke(Stroke::new(1.0_f32, theme::BORDER))
         .rounding(Rounding::same(10.0))
         .inner_margin(Margin::same(16.0))
         .show(ui, |ui| {
@@ -214,7 +214,7 @@ pub fn game_badge(ui: &mut Ui, game: &str) {
 pub fn empty_state(ui: &mut Ui, title: &str, hint: &str) {
     Frame::none()
         .fill(theme::SURFACE)
-        .stroke(Stroke::new(1.0, theme::BORDER))
+        .stroke(Stroke::new(1.0_f32, theme::BORDER))
         .rounding(Rounding::same(10.0))
         .inner_margin(Margin::same(18.0))
         .show(ui, |ui| {

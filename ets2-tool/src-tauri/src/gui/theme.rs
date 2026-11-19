@@ -70,7 +70,7 @@ fn visuals() -> Visuals {
 
     v.panel_fill = BG;
     v.window_fill = SURFACE;
-    v.window_stroke = Stroke::new(1.0, BORDER);
+    v.window_stroke = Stroke::new(1.0_f32, BORDER);
     v.window_rounding = Rounding::same(10.0);
     v.menu_rounding = Rounding::same(8.0);
     v.extreme_bg_color = INPUT_BG;
@@ -79,7 +79,7 @@ fn visuals() -> Visuals {
 
     v.selection = egui::style::Selection {
         bg_fill: ACCENT,
-        stroke: Stroke::new(1.0, ON_ACCENT),
+        stroke: Stroke::new(1.0_f32, ON_ACCENT),
     };
     v.hyperlink_color = ACCENT;
     v.warn_fg_color = WARNING;
@@ -127,9 +127,9 @@ fn widget(
     egui::style::WidgetVisuals {
         bg_fill,
         weak_bg_fill,
-        bg_stroke: Stroke::new(1.0, border),
+        bg_stroke: Stroke::new(1.0_f32, border),
         rounding: Rounding::same(radius),
-        fg_stroke: Stroke::new(1.0, text),
+        fg_stroke: Stroke::new(1.0_f32, text),
         expansion: 0.0,
     }
 }

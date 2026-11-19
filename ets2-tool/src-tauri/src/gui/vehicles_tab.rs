@@ -390,7 +390,7 @@ fn render_truck_switcher(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     ui.strong("Status");
                 });
             })
-            .body(|mut body| {
+            .body(|body| {
                 // Rows are two lines tall (brand/model over truck id).
                 body.rows(36.0, trucks.len(), |mut row| {
                     let item = trucks[row.index()];
@@ -588,7 +588,7 @@ fn render_trailer_switcher(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     ui.strong("Status");
                 });
             })
-            .body(|mut body| {
+            .body(|body| {
                 // Rows are two lines tall (name over trailer id).
                 body.rows(36.0, trailers.len(), |mut row| {
                     let item = trailers[row.index()];
@@ -937,7 +937,7 @@ fn render_fleet_inventory(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     );
                 });
             })
-            .body(|mut body| {
+            .body(|body| {
                 body.rows(20.0, trucks.len(), |mut row| {
                     let t = trucks[row.index()];
                     row.col(|ui| {
@@ -1059,7 +1059,7 @@ fn render_fleet_inventory(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     );
                 });
             })
-            .body(|mut body| {
+            .body(|body| {
                 body.rows(20.0, trailers.len(), |mut row| {
                     let tr = trailers[row.index()];
                     row.col(|ui| {
