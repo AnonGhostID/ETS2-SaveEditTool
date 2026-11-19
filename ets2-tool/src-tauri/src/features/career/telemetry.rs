@@ -300,6 +300,10 @@ pub fn ensure_running(app: AppHandle, runtime: Arc<CareerRuntime>, game: GameId)
         let mut last_error_log_ms = 0i64;
         let mut last_frontend_tick_emit_ms = 0i64;
         let mut last_frontend_payload: Option<FrontendTelemetryPayload> = None;
+        // NT2: the native bridge latches `job_event` until the game clears
+        // it, so the same event would be reported on every poll. Track the
+        // last consumed sequence so a latched event is only delivered once.
+        let mut last_job_event_sequence: Option<u64> = None;
 
         while !runtime.stop_all.load(Ordering::Relaxed)
             && !runtime.telemetry_stop.load(Ordering::Relaxed)
@@ -325,7 +329,20 @@ pub fn ensure_running(app: AppHandle, runtime: Arc<CareerRuntime>, game: GameId)
             }
 
             match bridge.as_ref().unwrap().read_snapshot() {
-                Ok(Some(snapshot)) => {
+                Ok(Some(mut snapshot)) => {
+                    // NT2: only the first snapshot carrying a new
+                    // `job_event_sequence` is a real event. Later snapshots
+                    // with the same sequence carry the latched event again
+                    // and must not re-fire it, so strip the event before
+                    // the snapshot reaches job tracking or the frontend.
+                    if last_job_event_sequence == Some(snapshot.job_event_sequence) {
+                        snapshot.job_event = None;
+                        if let Some(job) = snapshot.job.as_mut() {
+                            job.event = None;
+                        }
+                    } else {
+                        last_job_event_sequence = Some(snapshot.job_event_sequence);
+                    }
                     let now = chrono::Utc::now().timestamp_millis();
                     runtime.plugin_installed.store(true, Ordering::Relaxed);
                     runtime.bridge_connected.store(true, Ordering::Relaxed);
@@ -402,6 +419,19 @@ pub fn ensure_running(app: AppHandle, runtime: Arc<CareerRuntime>, game: GameId)
                     std::thread::sleep(Duration::from_millis(500));
                 }
             }
+        }
+
+        // D7: the reader loop exited (game closed or reader stopped);
+        // finalize any job still tracked in memory so it is not left
+        // `active` forever. Jobs still active when the app itself exits
+        // are reconciled on the next startup by `db::init_logbook`.
+        if let Err(error) =
+            crate::features::career::job_tracking::finalize_active_job(runtime.as_ref())
+        {
+            crate::dev_log!(
+                "[career] failed to finalize active job on telemetry stop: {}",
+                error
+            );
         }
 
         runtime.telemetry_running.store(false, Ordering::Relaxed);

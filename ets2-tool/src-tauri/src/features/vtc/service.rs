@@ -45,6 +45,14 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
     })
 }
 
+/// Trim an optional value but keep it present: unlike
+/// `normalize_optional`, an empty string stays `Some("")` so the repo
+/// layer can tell "clear this field" apart from "leave it unchanged"
+/// (D12a).
+fn trim_optional(value: Option<String>) -> Option<String> {
+    value.map(|raw| raw.trim().to_string())
+}
+
 fn validate_username_format(username: &str) -> Result<String, String> {
     let normalized = normalize_required(username);
     if normalized.len() < 3 {
@@ -413,17 +421,22 @@ pub fn update_company_profile(
         return Err("not_allowed".to_string());
     }
 
+    // D12a: name/location are required, so an empty value means "keep
+    // the current one". The nullable fields keep `Some("")` as an
+    // explicit clear request; `None` still means "leave unchanged".
     input.name = normalize_optional(input.name);
     input.location = normalize_optional(input.location);
-    input.language = normalize_optional(input.language);
-    input.description = normalize_optional(input.description);
-    input.logo_path = normalize_optional(input.logo_path);
-    input.header_path = normalize_optional(input.header_path);
-    input.slogan = normalize_optional(input.slogan);
-    input.accent_color = normalize_optional(input.accent_color);
-    if let Some(game) = input.game.as_ref() {
-        input.game = Some(validate_game(game)?);
-    }
+    input.language = trim_optional(input.language);
+    input.description = trim_optional(input.description);
+    input.logo_path = trim_optional(input.logo_path);
+    input.header_path = trim_optional(input.header_path);
+    input.slogan = trim_optional(input.slogan);
+    input.accent_color = trim_optional(input.accent_color);
+    input.game = match input.game {
+        Some(game) if game.trim().is_empty() => Some(String::new()),
+        Some(game) => Some(validate_game(&game)?),
+        None => None,
+    };
 
     if let Some(name) = input.name.as_ref() {
         if let Some(existing_company_id) =
@@ -532,6 +545,16 @@ pub fn assign_member_role(
         }
     }
 
+    // D12b: mirror the owner-demotion guard from `change_member_role` —
+    // a manager/CEO must not be able to demote the company owner.
+    if role_key != "owner" {
+        if let Some(member) = repo::load_company_member_by_user(conn, company_id, user_id)? {
+            if member.role_key == "owner" {
+                return Err("not_allowed".to_string());
+            }
+        }
+    }
+
     let now = now_rfc3339();
     repo::assign_member_role(conn, company_id, user_id, &role_key, Some(actor_id), &now)?;
     repo::set_user_company(conn, user_id, company_id)?;
@@ -577,6 +600,30 @@ pub fn change_member_role(
 
 pub fn get_available_roles(conn: &Connection) -> Result<Vec<CompanyRoleOption>, String> {
     repo::list_roles(conn)
+}
+
+/// D12c: the role list is fixed reference data (the same rows
+/// `db::seed_roles` inserts), so it can be answered without opening the
+/// database at all — no ensure-tables, no admin seeding, no company
+/// bootstrap for a read that needs none of it.
+pub fn get_available_roles_static() -> Vec<CompanyRoleOption> {
+    [
+        ("owner", "Owner", 1),
+        ("ceo", "CEO", 2),
+        ("manager", "Manager", 3),
+        ("dispatcher", "Dispatcher", 4),
+        ("driver", "Driver", 5),
+        ("trainee", "Trainee", 6),
+        ("recruiter", "Recruiter", 7),
+        ("mechanic", "Mechanic", 8),
+    ]
+    .iter()
+    .map(|(role_key, role_label, sort_order)| CompanyRoleOption {
+        role_key: role_key.to_string(),
+        role_label: role_label.to_string(),
+        sort_order: *sort_order,
+    })
+    .collect()
 }
 
 pub fn get_user_settings(conn: &Connection, auth: &AuthState) -> Result<UserSettings, String> {

@@ -18,6 +18,10 @@ pub fn init_logbook(db_path: &Path) -> Result<(), String> {
     }
 
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|e| e.to_string())?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| e.to_string())?;
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS trips (
@@ -66,6 +70,22 @@ pub fn init_logbook(db_path: &Path) -> Result<(), String> {
     fleet::ensure_tables(&conn)?;
     dispatcher::ensure_tables(&conn)?;
     job_log::ensure_tables(&conn)?;
+    // D7: reconcile jobs still marked active after an unclean exit (the app
+    // was closed while a job was tracked). Mirrors the trips reconciliation
+    // above; jobs finalized by the telemetry reader on shutdown never reach
+    // this state. Runs before analytics::ensure_tables so the backfill sees
+    // aborted rows, not active ones.
+    conn.execute(
+        r#"
+        UPDATE career_job_log
+        SET
+            status = CASE WHEN status = 'active' THEN 'aborted' ELSE status END,
+            ended_at_utc = COALESCE(ended_at_utc, last_seen_at_utc)
+        WHERE status = 'active' AND ended_at_utc IS NULL
+        "#,
+        [],
+    )
+    .map_err(|e| e.to_string())?;
     analytics::ensure_tables(&conn)?;
 
     auth::db::ensure_tables(&conn)?;

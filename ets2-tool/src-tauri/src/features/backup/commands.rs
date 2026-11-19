@@ -47,7 +47,16 @@ pub fn preview_backup_restore(
     backup_id: String,
     profile_state: State<'_, AppProfileState>,
 ) -> Result<BackupRestorePreviewDto, String> {
-    let preview = service::build_restore_preview(&backup_id)?;
+    let resolved = snapshot_resolved_save_context(profile_state.inner()).ok();
+    let preview = service::build_restore_preview_for_context(
+        resolved
+            .as_ref()
+            .and_then(|item| item.context.profile_reference.as_deref()),
+        resolved
+            .as_ref()
+            .and_then(|item| item.context.save_reference.as_deref()),
+        &backup_id,
+    )?;
     let mut context = logging_service::resolve_active_context(profile_state.inner());
     context.extra.insert("backupId".to_string(), backup_id);
     let _ = logging_service::record_info(

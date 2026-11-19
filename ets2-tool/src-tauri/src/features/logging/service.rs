@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use rusqlite::Connection;
+use crate::dev_log;
 use crate::tauri::AppHandle;
 
 use crate::db::sqlite;
@@ -217,12 +218,25 @@ fn record_entry(
     let detail = technical_details
         .map(|cause| format!("{}\nReason: {}", user_message, cause))
         .unwrap_or_else(|| user_message.to_owned());
-    log_to_user_log(level, action, &detail)
+    // U5: callers fire-and-forget these record calls, so a failure here must
+    // not vanish silently — report it to the debug log before returning it.
+    let result = log_to_user_log(level, action, &detail);
+    if let Err(error) = &result {
+        dev_log!(
+            "logging record failed ({} {}): {}",
+            level,
+            action,
+            error
+        );
+    }
+    result
 }
 
 fn open_runtime_connection() -> Result<Connection, String> {
     let db_path = sqlite::app_db_path();
     let conn = Connection::open(db_path).map_err(|error| error.to_string())?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|error| error.to_string())?;
     conn.busy_timeout(Duration::from_secs(5))
         .map_err(|error| error.to_string())?;
     Ok(conn)

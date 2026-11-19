@@ -291,6 +291,13 @@ pub fn verify_garage_resource_assignment(
         }
     }
 
+    // G3: enforce the slot-level and driver-linkage invariants that the
+    // assignment helpers check (they were dead code until now).
+    verify_target_assignment_slots(&previous_state, &updated_state, spec)?;
+    let before_blocks = parse_unit_blocks(before_content);
+    let after_blocks = parse_unit_blocks(after_content);
+    verify_assignment_objects(&before_blocks, &after_blocks, garage_id, spec)?;
+
     Ok(VerifiedGarageMutation {
         previous_state,
         updated_state,
@@ -313,7 +320,12 @@ pub fn verify_ai_driver_mutation(
     let after = parse_ai_driver_management_from_sii(after_content, "ets2", "")
         .map_err(|error| format!("save_verification_failed:{error}"))?;
     verify_ai_driver_consistency(after_content)?;
-    verify_ai_driver_unit_changes(before_content, after_content, operation)?;
+    verify_ai_driver_unit_changes(
+        before_content,
+        after_content,
+        operation,
+        affected_driver_ids,
+    )?;
 
     let before_ids = before
         .drivers
@@ -417,6 +429,7 @@ fn verify_ai_driver_unit_changes(
     before_content: &str,
     after_content: &str,
     operation: &AiDriverMutationOperation,
+    affected_driver_ids: &[String],
 ) -> Result<(), String> {
     let before = parse_unit_blocks(before_content);
     let after = parse_unit_blocks(after_content);
@@ -430,6 +443,18 @@ fn verify_ai_driver_unit_changes(
             return Err("save_verification_failed:unit_order_changed".to_string());
         }
         if previous.raw_block == updated.raw_block {
+            continue;
+        }
+        // G2: an affected driver's driver_ai block may change, but only
+        // in its assigned_truck linkage — every other line must match.
+        if previous.unit_type == "driver_ai"
+            && affected_driver_ids
+                .iter()
+                .any(|driver_id| normalize_sii_unit_id(driver_id) == normalize_sii_unit_id(&previous.id))
+        {
+            if immutable_ai_driver_lines(previous) != immutable_ai_driver_lines(updated) {
+                return Err("save_verification_failed:driver_metadata_changed".to_string());
+            }
             continue;
         }
         if previous.unit_type == "garage" {
@@ -476,6 +501,20 @@ fn immutable_ai_garage_lines(block: &UnitBlock) -> Vec<&str> {
                 && !line.starts_with("vehicles[")
                 && !line.starts_with("drivers:")
                 && !line.starts_with("drivers[")
+        })
+        .collect()
+}
+
+/// Lines of a driver_ai block that an AI-driver mutation must not touch.
+/// Only the `assigned_truck:` linkage may change (G2); the `assigned_truck_*`
+/// stats lines are excluded from the mutable set by the trailing colon.
+fn immutable_ai_driver_lines(block: &UnitBlock) -> Vec<&str> {
+    block
+        .raw_block
+        .lines()
+        .filter(|line| {
+            let line = line.trim_start();
+            !line.starts_with("assigned_truck:")
         })
         .collect()
 }
@@ -696,10 +735,19 @@ fn verify_target_assignment_slots(
             .find(|slot| slot.index == previous_slot.index)
             .ok_or_else(|| "save_verification_failed:garage_slot_removed".to_string())?;
         let expected_truck = if spec.assigned_truck_slot_index == Some(previous_slot.index) {
-            if previous_slot.truck_id.is_some() {
-                return Err("save_verification_failed:truck_slot_overwritten".to_string());
+            match previous_slot.truck_id.as_deref() {
+                // The truck was already in this slot (a driver generated
+                // into an occupied slot): it must stay the same truck.
+                Some(previous_truck) => {
+                    if spec.assigned_truck_id.as_deref() != Some(previous_truck) {
+                        return Err(
+                            "save_verification_failed:truck_references_changed".to_string()
+                        );
+                    }
+                    previous_slot.truck_id.clone()
+                }
+                None => spec.assigned_truck_id.clone(),
             }
-            spec.assigned_truck_id.clone()
         } else {
             previous_slot.truck_id.clone()
         };
@@ -717,11 +765,24 @@ fn verify_target_assignment_slots(
         if updated_slot.driver_id != expected_driver {
             return Err("save_verification_failed:driver_references_changed".to_string());
         }
-        if updated_slot.driver_id.is_some() && updated_slot.truck_id.is_none() {
-            return Err("save_verification_failed:driver_without_truck".to_string());
-        }
+        // NOTE: a driver without a truck is a legitimate state (drivers
+        // can be generated without truck assignment), so no blanket
+        // driver-without-truck check is applied here.
     }
-    let expected_truck_delta = usize::from(spec.assigned_truck_id.is_some());
+    // The truck count only grows when the assigned truck actually moved
+    // into this garage; a truck that was already in the target slot
+    // (driver generated into an occupied slot) adds nothing.
+    let truck_added = spec
+        .assigned_truck_slot_index
+        .is_some_and(|index| {
+            previous
+                .slots
+                .iter()
+                .find(|slot| slot.index == index)
+                .is_some_and(|slot| slot.truck_id.is_none())
+        })
+        && spec.assigned_truck_id.is_some();
+    let expected_truck_delta = usize::from(truck_added);
     let expected_driver_delta = usize::from(spec.assigned_driver_id.is_some());
     if updated.assigned_truck_count != previous.assigned_truck_count + expected_truck_delta
         || updated.assigned_driver_count != previous.assigned_driver_count + expected_driver_delta
@@ -746,33 +807,47 @@ fn verify_assignment_objects(
         }
         unique_block_from_blocks(before_blocks, "vehicle", truck_id)?;
         unique_block_from_blocks(after_blocks, "vehicle", truck_id)?;
-        ensure_reference_was_unassigned_before(before_blocks, "vehicles", truck_id)?;
+        // NOTE: no "truck was unassigned before" check — the truck
+        // legitimately comes from another garage slot (or was already
+        // in the target slot) in the truck-move flows.
     }
 
     if let Some(driver_id) = spec.assigned_driver_id.as_deref() {
         let slot_index = spec
             .assigned_driver_slot_index
             .ok_or_else(|| "save_verification_failed:assignment_slot_missing".to_string())?;
-        let before_driver = unique_block_from_blocks(before_blocks, "driver_ai", driver_id)?;
+        // The driver_ai block must exist before and after the mutation.
+        // Its pre-mutation assigned_truck value is intentionally not
+        // checked: the writer overwrites the linkage, so a stale value
+        // left by an older build must not block a legitimate hire.
+        let _before_driver = unique_block_from_blocks(before_blocks, "driver_ai", driver_id)?;
         let after_driver = unique_block_from_blocks(after_blocks, "driver_ai", driver_id)?;
-        if !extract_field_value(&before_driver.raw_block, "assigned_truck")
-            .is_some_and(|value| is_null_ref(&value))
-        {
-            return Err("save_verification_failed:driver_already_assigned".to_string());
-        }
         ensure_reference_was_unassigned_before(before_blocks, "drivers", driver_id)?;
         let updated_garage = unique_garage_block_from_blocks(after_blocks, garage_id)?;
         let vehicles = extract_array_entries(&updated_garage.raw_block, "vehicles")
             .into_iter()
             .collect::<BTreeMap<_, _>>();
-        let assigned_truck = vehicles
-            .get(&slot_index)
-            .filter(|value| !is_null_ref(value))
-            .ok_or_else(|| "save_verification_failed:driver_without_truck".to_string())?;
         let driver_assigned_truck = extract_field_value(&after_driver.raw_block, "assigned_truck")
             .ok_or_else(|| "save_verification_failed:driver_assigned_truck_missing".to_string())?;
-        if normalize_sii_unit_id(&driver_assigned_truck) != normalize_sii_unit_id(assigned_truck) {
-            return Err("save_verification_failed:driver_assigned_truck_mismatch".to_string());
+        match vehicles.get(&slot_index).filter(|value| !is_null_ref(value)) {
+            // Driver got a truck: the driver_ai linkage must name it (G2).
+            Some(assigned_truck) => {
+                if normalize_sii_unit_id(&driver_assigned_truck)
+                    != normalize_sii_unit_id(assigned_truck)
+                {
+                    return Err(
+                        "save_verification_failed:driver_assigned_truck_mismatch".to_string()
+                    );
+                }
+            }
+            // Driver without a truck: the linkage must stay null.
+            None => {
+                if !is_null_ref(&driver_assigned_truck) {
+                    return Err(
+                        "save_verification_failed:driver_assigned_truck_mismatch".to_string()
+                    );
+                }
+            }
         }
     }
     Ok(())

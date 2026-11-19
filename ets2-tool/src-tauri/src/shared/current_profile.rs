@@ -1,9 +1,7 @@
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::shared::models::profile::ActiveSaveSelection;
 use crate::shared::models::save_context::SaveContext;
-use crate::shared::paths::profile_search_roots;
 use crate::state::AppProfileState;
 use crate::tauri::State;
 
@@ -15,15 +13,29 @@ pub struct ResolvedSaveContext {
 }
 
 pub fn set_current_profile(state: State<'_, AppProfileState>, path: String) {
-    *state.current_profile.lock().unwrap() = Some(path);
+    // Poison-safe (AS8): recover the guard instead of panicking, so a
+    // poisoned lock still applies the new selection.
+    let mut guard = state
+        .current_profile
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *guard = Some(path);
 }
 
 pub fn clear_current_profile(state: State<'_, AppProfileState>) {
-    *state.current_profile.lock().unwrap() = None;
+    let mut guard = state
+        .current_profile
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *guard = None;
 }
 
 pub fn get_current_profile(state: State<'_, AppProfileState>) -> Option<String> {
-    state.current_profile.lock().unwrap().clone()
+    state
+        .current_profile
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
 }
 
 pub fn require_current_profile(state: State<'_, AppProfileState>) -> Result<String, String> {
@@ -34,7 +46,7 @@ pub fn require_current_save(state: State<'_, AppProfileState>) -> Result<String,
     state
         .current_save
         .lock()
-        .unwrap()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone()
         .ok_or_else(|| "Kein Save geladen.".to_string())
 }
@@ -63,17 +75,14 @@ pub fn snapshot_resolved_save_context(
     state: &AppProfileState,
 ) -> Result<ResolvedSaveContext, String> {
     let selection = snapshot_active_save_selection(state)?;
-    let selected_game = state
-        .selected_game
-        .lock()
-        .map_err(|_| "AppProfileState selected_game lock poisoned".to_string())?
-        .clone();
 
     let mut profile_path = normalize_existing_path(selection.profile_path);
-    let mut save_path = normalize_existing_path(selection.save_path);
+    let save_path = normalize_existing_path(selection.save_path);
     let mut profile_inferred = false;
-    let mut save_inferred = false;
 
+    // Deriving the profile from the stored save path is structural, not
+    // a guess: the save lives inside its profile directory. It stays
+    // tagged as inferred so callers can surface it (AS4).
     if profile_path.is_none() {
         if let Some(derived_profile) = save_path.as_deref().and_then(derive_profile_from_save_path)
         {
@@ -82,31 +91,32 @@ pub fn snapshot_resolved_save_context(
         }
     }
 
-    if let Some(current_profile) = profile_path.clone() {
-        if save_path.is_none() {
-            if let Some(inferred_save) = latest_save_for_profile(Path::new(&current_profile)) {
-                save_path = Some(inferred_save);
-                save_inferred = true;
-            }
+    // NOTE (AS4): no mtime-based inference here anymore. When the stored
+    // selection is missing or stale, the caller must ask for an explicit
+    // profile/save selection instead of silently operating on whichever
+    // profile/save happens to have the newest game.sii.
+    let profile_path = match profile_path {
+        Some(path) => path,
+        None => {
+            return Err(
+                "No profile is selected. Please select a profile first.".to_string()
+            );
         }
-    }
-
-    if profile_path.is_none() || save_path.is_none() {
-        let inferred = infer_profile_and_save_from_disk(&selected_game, profile_path.as_deref());
-        if profile_path.is_none() {
-            profile_path = inferred.0;
-            profile_inferred = profile_path.is_some();
+    };
+    let save_path = match save_path {
+        Some(path) => path,
+        None => {
+            return Err(
+                "No save is selected for the current profile. Please select a save first."
+                    .to_string(),
+            );
         }
-        if save_path.is_none() {
-            save_path = inferred.1;
-            save_inferred = save_path.is_some();
-        }
-    }
+    };
 
     Ok(ResolvedSaveContext {
-        context: SaveContext::from_paths(profile_path, save_path),
+        context: SaveContext::from_paths(Some(profile_path), Some(save_path)),
         profile_inferred,
-        save_inferred,
+        save_inferred: false,
     })
 }
 
@@ -152,98 +162,4 @@ fn derive_profile_from_save_path(save_path: &str) -> Option<String> {
     }
 
     Some(profile_dir.display().to_string().replace('\\', "/"))
-}
-
-fn infer_profile_and_save_from_disk(
-    selected_game: &str,
-    preferred_profile: Option<&str>,
-) -> (Option<String>, Option<String>) {
-    if let Some(preferred_profile) = preferred_profile {
-        if let Some(save_path) = latest_save_for_profile(Path::new(preferred_profile)) {
-            return (Some(preferred_profile.replace('\\', "/")), Some(save_path));
-        }
-    }
-
-    let mut best_match: Option<(String, String, u128)> = None;
-    for profile_dir in collect_profile_directories(selected_game) {
-        let Some(save_path) = latest_save_for_profile(&profile_dir) else {
-            continue;
-        };
-        let modified_token = modified_timestamp(Path::new(&save_path)).unwrap_or(0);
-        let normalized_profile = profile_dir.display().to_string().replace('\\', "/");
-        match best_match.as_ref() {
-            Some((_, _, current_modified)) if *current_modified >= modified_token => {}
-            _ => {
-                best_match = Some((normalized_profile, save_path, modified_token));
-            }
-        }
-    }
-
-    match best_match {
-        Some((profile_path, save_path, _)) => (Some(profile_path), Some(save_path)),
-        None => (None, None),
-    }
-}
-
-fn collect_profile_directories(selected_game: &str) -> Vec<PathBuf> {
-    let mut profiles = Vec::new();
-    for root in profile_search_roots(selected_game) {
-        if !root.exists() {
-            continue;
-        }
-
-        let Ok(entries) = fs::read_dir(root) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() || !path.join("profile.sii").exists() {
-                continue;
-            }
-            profiles.push(path);
-        }
-    }
-    profiles
-}
-
-fn latest_save_for_profile(profile_path: &Path) -> Option<String> {
-    let save_root = profile_path.join("save");
-    if !save_root.exists() {
-        return None;
-    }
-
-    let mut best_match: Option<(String, u128)> = None;
-    let entries = fs::read_dir(save_root).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-
-        let game_sii = path.join("game.sii");
-        if !game_sii.exists() {
-            continue;
-        }
-
-        let modified_token = modified_timestamp(&game_sii).unwrap_or(0);
-        let normalized_path = path.display().to_string().replace('\\', "/");
-        match best_match.as_ref() {
-            Some((_, current_modified)) if *current_modified >= modified_token => {}
-            _ => {
-                best_match = Some((normalized_path, modified_token));
-            }
-        }
-    }
-
-    best_match.map(|(path, _)| path)
-}
-
-fn modified_timestamp(path: &Path) -> Option<u128> {
-    fs::metadata(path)
-        .ok()?
-        .modified()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .map(|duration| duration.as_millis())
 }

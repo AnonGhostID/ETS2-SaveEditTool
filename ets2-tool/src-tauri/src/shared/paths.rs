@@ -281,7 +281,10 @@ pub fn profile_search_roots(game: &str) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     push_unique_path(&mut roots, paths.profiles_dir);
     push_unique_path(&mut roots, paths.steam_profiles_dir);
-    push_unique_path(&mut roots, paths.profiles_backup_dir);
+    // NOTE (AS6): profiles.backup is intentionally NOT a search root.
+    // Backup copies are not live profiles and must not be offered as
+    // selectable sources; restore flows use
+    // profiles_backup_directory_path() explicitly.
     push_unique_path(&mut roots, paths.game_data_dir);
     roots
 }

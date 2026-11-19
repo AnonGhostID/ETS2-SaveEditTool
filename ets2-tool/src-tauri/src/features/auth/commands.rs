@@ -11,15 +11,18 @@ use crate::state::AuthState;
 fn open_connection(auth: &AuthState) -> Result<Connection, String> {
     let db_path = db::default_db_path();
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|e| e.to_string())?;
     db::ensure_tables(&conn)?;
     vtc::db::ensure_tables(&conn)?;
-    service::seed_default_admin(&conn)?;
     vtc::service::ensure_local_company_bootstrap(&conn, auth)?;
     Ok(conn)
 }
 pub fn auth_seed_default_admin() -> Result<(), String> {
     let db_path = db::default_db_path();
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|e| e.to_string())?;
     db::ensure_tables(&conn)?;
     vtc::db::ensure_tables(&conn)?;
     service::seed_default_admin(&conn)?;

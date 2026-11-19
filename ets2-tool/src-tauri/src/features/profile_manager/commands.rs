@@ -13,6 +13,7 @@ use crate::shared::trace::{TraceScope, lock_mutex};
 use crate::shared::user_log;
 use crate::state::{AppProfileState, DecryptCache, ProfileCache};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use crate::tauri::Manager;
 use crate::tauri::State;
@@ -247,6 +248,13 @@ pub fn find_ets2_profiles(state: State<'_, AppProfileState>) -> Vec<ProfileInfo>
     let _ = user_log::user_log_info("ProfileManager", "Profile search started.");
     dev_log!("Starte Profil-Sucheâ€¦");
     let mut found_profiles = Vec::new();
+    // The search roots overlap (profiles/ vs profiles.backup/ can hold the
+    // same profile), so dedup by canonical path (same directory reached
+    // through overlapping roots) and by folder name (a backup copy of the
+    // same profile). The first root wins, which keeps the live copy
+    // because profiles_dir is searched before profiles_backup_dir (AS6).
+    let mut seen_canonical_paths: HashSet<String> = HashSet::new();
+    let mut seen_folder_names: HashSet<String> = HashSet::new();
 
     let game_key = state.selected_game.lock().unwrap().clone();
     for folder in profile_search_roots(&game_key) {
@@ -262,6 +270,22 @@ pub fn find_ets2_profiles(state: State<'_, AppProfileState>) -> Vec<ProfileInfo>
 
                 let sii = path.join("profile.sii");
                 if !sii.exists() {
+                    continue;
+                }
+
+                let canonical_key = fs::canonicalize(&path)
+                    .map(|resolved| resolved.display().to_string())
+                    .unwrap_or_else(|_| path.display().to_string())
+                    .replace('\\', "/")
+                    .to_ascii_lowercase();
+                let folder_key = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                if !seen_canonical_paths.insert(canonical_key)
+                    || !seen_folder_names.insert(folder_key)
+                {
                     continue;
                 }
 

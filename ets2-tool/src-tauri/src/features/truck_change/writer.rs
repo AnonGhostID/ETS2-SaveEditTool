@@ -116,6 +116,9 @@ pub struct TemporaryRollbackSnapshot {
     target_path: PathBuf,
     snapshot_path: PathBuf,
     cleaned: bool,
+    /// Staged overlay captured at creation, so a rollback restores the
+    /// pre-transaction staged edits instead of dropping them (SW3).
+    staged_before: Option<String>,
 }
 
 impl TemporaryRollbackSnapshot {
@@ -139,10 +142,19 @@ impl TemporaryRollbackSnapshot {
             target_path: target_path.to_path_buf(),
             snapshot_path,
             cleaned: false,
+            staged_before: save_session::staged_content(target_path),
         })
     }
 
     pub fn restore(&self) -> Result<(), String> {
+        // SW3: the rollback restores disk bytes; restore the staged
+        // overlay to its pre-transaction state (or drop it if there
+        // was none) so rejected content cannot be flushed later by a
+        // top-bar Save, while earlier staged edits survive.
+        match self.staged_before.as_deref() {
+            Some(content) => save_session::stage_save(&self.target_path, content),
+            None => save_session::remove_staged(&self.target_path),
+        }
         fs::copy(&self.snapshot_path, &self.target_path).map_err(|error| {
             format!(
                 "temporary_rollback_restore_failed:{}:{}",

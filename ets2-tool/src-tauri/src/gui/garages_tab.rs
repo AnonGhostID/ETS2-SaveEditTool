@@ -58,7 +58,14 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                 app.ai_driver_mgmt = Some(mgmt);
                 app.set_status("Loaded garages and AI drivers.", false);
             }
-            Err(e) => app.set_status(format!("Garage load error: {e}"), true),
+            Err(e) => {
+                // G6: a failed load must not leave stale data (with a
+                // stale save hash) behind.
+                app.garage_list = None;
+                app.ai_driver_mgmt = None;
+                app.selected_garage_id = None;
+                app.set_status(format!("Garage load error: {e}"), true);
+            }
         }
     }
     if app.garages_load.is_loading() {
@@ -132,15 +139,36 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
     });
     ui.add_space(10.0);
 
+    // G7: list-level and driver-level parse warnings were dropped; only
+    // per-garage warnings were ever shown.
+    let list_warnings = &garages_res.diagnostics.warnings;
+    let driver_warnings: &[String] = app
+        .ai_driver_mgmt
+        .as_ref()
+        .map(|mgmt| mgmt.warnings.as_slice())
+        .unwrap_or(&[]);
+    if !list_warnings.is_empty() || !driver_warnings.is_empty() {
+        ui.card(|ui| {
+            ui.horizontal(|ui| {
+                components::status_dot(ui, theme::WARNING);
+                ui.label("The save could not be read unambiguously in places:");
+            });
+            for warning in list_warnings.iter().chain(driver_warnings.iter()) {
+                ui.label(format!("• {warning}"));
+            }
+        });
+        ui.add_space(8.0);
+    }
+
     // Toolbar: search + filter + bulk actions.
+    // G4/G5: count with the backend's strict "sellable" rule, not the
+    // loose "no drivers, no trucks" rule — the headquarters and
+    // garages with occupied slots or trailers are skipped by the
+    // backend, so counting them promised sales that never happen.
     let empty_owned_count = garages_res
         .garages
         .iter()
-        .filter(|g| {
-            g.ownership == GarageOwnership::Owned
-                && g.assigned_driver_count == 0
-                && g.assigned_truck_count == 0
-        })
+        .filter(|g| is_sellable(g))
         .count();
     let unowned_count = garages_res.diagnostics.not_owned_garage_count;
     ui.horizontal_wrapped(|ui| {
@@ -572,7 +600,16 @@ fn render_garage_detail(
                         );
                     }
                 }
-                if ui.button("Sell").clicked() {
+                // G4/G5: the backend refuses to sell the headquarters
+                // or a non-empty garage — do not offer what it refuses.
+                let sellable = is_sellable(g);
+                if ui
+                    .add_enabled(sellable, egui::Button::new("Sell"))
+                    .on_disabled_hover_text(
+                        "Only an empty garage can be sold; the headquarters and garages with drivers, trucks or trailers are refused.",
+                    )
+                    .clicked()
+                {
                     app.garage_confirm = Some(GarageConfirm::SellGarage {
                         garage_id: garage_id.clone(),
                         label: label.clone(),
@@ -591,14 +628,14 @@ fn render_garage_confirm(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
         GarageConfirm::SellGarage { label, .. } => (
             "Sell garage",
             format!(
-                "Sell {label}? The garage and its assigned drivers and trucks go with it. You can buy it back later."
+                "Sell {label}? Only an empty garage can be sold — the headquarters and garages with drivers, trucks or trailers are refused. You can buy it back later."
             ),
             "Sell",
         ),
         GarageConfirm::SellEmpty { count } => (
             "Sell empty garages",
             format!(
-                "Sell all {count} empty garages? Only garages with no drivers or trucks are affected."
+                "Sell all {count} empty garages? Only garages with no drivers, trucks or trailers are sold; the headquarters is never sold."
             ),
             "Sell all",
         ),
@@ -652,13 +689,16 @@ fn run_garage_confirm(app: &mut Ets2NativeApp, confirm: &GarageConfirm) {
             );
         }
         GarageConfirm::SellEmpty { .. } => {
-            let Some(save_hash) = app
-                .garage_list
-                .as_ref()
-                .map(|list| list.save_hash.clone())
-            else {
+            let Some(list) = app.garage_list.clone() else {
                 return;
             };
+            let save_hash = list.save_hash.clone();
+            // G4/G5: map skipped garage ids to city names for the toast.
+            let labels: std::collections::HashMap<String, String> = list
+                .garages
+                .iter()
+                .map(|g| (g.garage_id.clone(), city_label(g).to_string()))
+                .collect();
             run_garage_command(
                 app,
                 move |ps, pc, dc, tc, tr, st| {
@@ -669,7 +709,23 @@ fn run_garage_confirm(app: &mut Ets2NativeApp, confirm: &GarageConfirm) {
                         ps, pc, dc, tc, tr, st,
                     )
                 },
-                |res| format!("Relinquished {} empty garages.", res.relinquished_count),
+                move |res| {
+                    let mut message =
+                        format!("Relinquished {} empty garages.", res.relinquished_count);
+                    if !res.skipped_garage_ids.is_empty() {
+                        let skipped: Vec<String> = res
+                            .skipped_garage_ids
+                            .iter()
+                            .map(|id| labels.get(id).cloned().unwrap_or_else(|| id.clone()))
+                            .collect();
+                        message.push_str(&format!(
+                            " Skipped {} (headquarters or trailers): {}.",
+                            skipped.len(),
+                            skipped.join(", ")
+                        ));
+                    }
+                    message
+                },
             );
         }
         GarageConfirm::BuyAll { .. } => {
@@ -752,10 +808,27 @@ fn run_garage_command<T>(
     }
 }
 
+/// G4/G5: mirrors the backend's relinquish rule (service.rs
+/// `mutation_target`, Relinquish arm): owned, not the headquarters,
+/// nothing assigned and no trailer slots.
+fn is_sellable(g: &GarageInfo) -> bool {
+    g.ownership == GarageOwnership::Owned
+        && !g.is_headquarters
+        && g.occupied_slots == 0
+        && g.assigned_truck_count == 0
+        && g.assigned_driver_count == 0
+        && g.assigned_trailer_count == 0
+        && g.trailer_slot_count == 0
+        && matches!(g.size, GarageSize::Small | GarageSize::Large)
+        && matches!(g.status, Some(2) | Some(3))
+}
+
 /// Load garages + drivers on a background thread (the explicit Load
 /// button only; post-mutation refreshes stay synchronous because the
-/// next edit needs the fresh save hash immediately).
-fn start_garages_load(app: &mut Ets2NativeApp) {
+/// next edit needs the fresh save hash immediately). Also used by the
+/// top-bar Save flush (G9) to refresh stale data after the disk hash
+/// changes.
+pub(crate) fn start_garages_load(app: &mut Ets2NativeApp) {
     let handle = app.app.clone();
     app.garages_load.start(move || {
         let profile = handle.state::<AppProfileState>();
@@ -792,7 +865,13 @@ fn reload_garages_and_drivers(app: &mut Ets2NativeApp) {
             ensure_default_driver_garage(app, &list);
             app.garage_list = Some(list);
         }
-        Err(e) => app.set_status(format!("Garage load error: {e}"), true),
+        // G6: a failed reload must not leave stale data (with a stale
+        // save hash) behind.
+        Err(e) => {
+            app.garage_list = None;
+            app.selected_garage_id = None;
+            app.set_status(format!("Garage load error: {e}"), true);
+        }
     }
 
     match async_runtime::block_on(get_ai_driver_management(
@@ -801,6 +880,9 @@ fn reload_garages_and_drivers(app: &mut Ets2NativeApp) {
         app.app_state(),
     )) {
         Ok(mgmt) => app.ai_driver_mgmt = Some(mgmt),
-        Err(e) => app.set_status(format!("AI driver load error: {e}"), true),
+        Err(e) => {
+            app.ai_driver_mgmt = None;
+            app.set_status(format!("AI driver load error: {e}"), true);
+        }
     }
 }

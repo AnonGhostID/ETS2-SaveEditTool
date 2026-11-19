@@ -52,6 +52,7 @@ struct CachedProfileData {
     save_path: Option<String>,
     base_config: Option<BaseGameConfig>,
     save_config: Option<SaveGameConfig>,
+    save_config_profile_path: Option<String>,
     save_game_data: Option<SaveGameData>,
     quicksave_data: Option<GameDataQuicksave>,
     current_truck_summary: Option<Option<CurrentTruckSummary>>,
@@ -84,6 +85,7 @@ impl ProfileCache {
         guard.save_path = None;
         guard.base_config = None;
         guard.save_config = None;
+        guard.save_config_profile_path = None;
         guard.save_game_data = None;
         guard.quicksave_data = None;
         guard.current_truck_summary = None;
@@ -163,17 +165,28 @@ impl ProfileCache {
         self.data.lock().unwrap().base_config = None;
     }
 
-    pub fn cache_save_config(&self, value: SaveGameConfig) {
+    // NOTE (P11): the save_config slot is keyed by profile path. A cached
+    // config is only served for the profile it was read from; any other
+    // profile misses and must read from disk.
+    pub fn cache_save_config(&self, profile_path: String, value: SaveGameConfig) {
         let mut guard = self.data.lock().unwrap();
+        guard.save_config_profile_path = Some(profile_path);
         guard.save_config = Some(value);
     }
 
-    pub fn get_save_config(&self) -> Option<SaveGameConfig> {
-        self.data.lock().unwrap().save_config.clone()
+    pub fn get_save_config(&self, profile_path: &str) -> Option<SaveGameConfig> {
+        let guard = self.data.lock().unwrap();
+        if guard.save_config_profile_path.as_deref() == Some(profile_path) {
+            guard.save_config.clone()
+        } else {
+            None
+        }
     }
 
     pub fn invalidate_save_config(&self) {
-        self.data.lock().unwrap().save_config = None;
+        let mut guard = self.data.lock().unwrap();
+        guard.save_config = None;
+        guard.save_config_profile_path = None;
     }
 
     pub fn cache_trucks(

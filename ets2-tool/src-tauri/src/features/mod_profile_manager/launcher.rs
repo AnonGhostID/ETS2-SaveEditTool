@@ -38,10 +38,10 @@ pub fn open_external_url(url: &str) -> Result<(), String> {
     let value = sanitize_external_url(url)?;
 
     if cfg!(target_os = "windows") {
-        for (name, command, args) in [
-            ("explorer", "explorer.exe", vec![value.as_str()]),
-            ("cmd_start", "cmd", vec!["/C", "start", "", value.as_str()]),
-        ] {
+        // NOTE (AS2): no `cmd /C start` fallback here. A shell fallback
+        // would interpret metacharacters in the value; explorer.exe is
+        // sufficient, and failure is reported to the caller instead.
+        for (name, command, args) in [("explorer", "explorer.exe", vec![value.as_str()])] {
             let result = run_command_status(command, &args);
             match result {
                 Ok(true) => {
@@ -81,6 +81,11 @@ pub fn open_external_url(url: &str) -> Result<(), String> {
 
 pub fn sanitize_steam_uri(input: &str) -> Result<String, String> {
     println!("[mod-profile-manager] sanitize_steam_uri input={input:?}");
+    // Control characters are rejected on the RAW input: trimming would
+    // strip a leading/trailing one and let it slip through.
+    if input.chars().any(|character| character.is_control()) {
+        return Err("Invalid Steam URI: contains control characters.".to_string());
+    }
     let mut value = input.trim();
     loop {
         let trimmed = value.trim_matches(|character| {
@@ -98,12 +103,20 @@ pub fn sanitize_steam_uri(input: &str) -> Result<String, String> {
     if value.contains('\0') {
         return Err("Invalid Steam URI: contains NUL byte.".to_string());
     }
+    if contains_shell_metacharacters(value) {
+        return Err("Invalid Steam URI: contains forbidden characters.".to_string());
+    }
 
     println!("[mod-profile-manager] sanitize_steam_uri output={value:?}");
     Ok(value.to_string())
 }
 
 pub fn sanitize_external_url(input: &str) -> Result<String, String> {
+    // Control characters are rejected on the RAW input: trimming would
+    // strip a leading/trailing one and let it slip through.
+    if input.chars().any(|character| character.is_control()) {
+        return Err("Invalid external URL: contains control characters.".to_string());
+    }
     let value = input.trim().trim_matches(|character| {
         matches!(character, '"' | '\'' | '`' | '\\') || character.is_whitespace()
     });
@@ -113,13 +126,33 @@ pub fn sanitize_external_url(input: &str) -> Result<String, String> {
     if value.contains('\0') {
         return Err("Invalid external URL: contains NUL byte.".to_string());
     }
+    if contains_shell_metacharacters(value) {
+        return Err("Invalid external URL: contains forbidden characters.".to_string());
+    }
     Ok(value.to_string())
+}
+
+/// Shell metacharacters and control characters must never reach a
+/// launcher: even with direct `Command` argv invocation (no shell), a
+/// value containing them is not a plausible URI/URL (AS2).
+fn contains_shell_metacharacters(value: &str) -> bool {
+    value.chars().any(|character| {
+        character.is_control()
+            || matches!(
+                character,
+                '&' | '|' | ';' | '<' | '>' | '^' | '`' | '$' | '(' | ')' | '"' | '\''
+            )
+    })
 }
 
 pub fn open_steam_uri(uri: &str) -> Result<(), String> {
     let uri = sanitize_steam_uri(uri)?;
 
     if cfg!(target_os = "windows") {
+        // NOTE (AS2): no `cmd /C start` fallback here. A shell fallback
+        // would interpret metacharacters in the value; rundll32 and
+        // explorer.exe are sufficient, and failure is reported to the
+        // caller instead.
         for (name, command, args) in [
             (
                 "rundll32_url_file_protocol_handler",
@@ -127,7 +160,6 @@ pub fn open_steam_uri(uri: &str) -> Result<(), String> {
                 vec!["url.dll,FileProtocolHandler", uri.as_str()],
             ),
             ("explorer", "explorer.exe", vec![uri.as_str()]),
-            ("cmd_start", "cmd", vec!["/C", "start", "", uri.as_str()]),
         ] {
             let result = run_command_status(command, &args);
             match result {
@@ -199,6 +231,20 @@ mod tests {
             sanitize_steam_uri("https://steamcommunity.com/sharedfiles/filedetails/?id=3710074411")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn rejects_shell_metacharacters_in_steam_uri() {
+        assert!(sanitize_steam_uri("steam://open/console&calc").is_err());
+        assert!(sanitize_steam_uri("steam://open/console|calc").is_err());
+        assert!(sanitize_steam_uri("steam://open/console;calc").is_err());
+        assert!(sanitize_steam_uri("steam://open/console$(calc)").is_err());
+    }
+
+    #[test]
+    fn rejects_shell_metacharacters_in_external_url() {
+        assert!(sanitize_external_url("https://example.com/?a=1&b=2").is_err());
+        assert!(sanitize_external_url("https://example.com/\n").is_err());
     }
 
     #[test]

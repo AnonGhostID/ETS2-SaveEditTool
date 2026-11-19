@@ -22,11 +22,20 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
     ui.horizontal_wrapped(|ui| {
         if components::primary_button(ui, "Refresh Status").clicked() {
             app.refresh_settings_and_location();
-            app.log_status = get_log_status().ok();
-            app.user_logs = get_user_logs(None, Some(100)).unwrap_or_default();
-            app.diagnostic_log_preview =
-                async_runtime::block_on(get_log_preview(app.diagnostics_state()))
-                    .unwrap_or_default();
+            // AS7: surface read failures instead of silently showing
+            // an empty state; keep the old values on failure.
+            match get_log_status() {
+                Ok(status) => app.log_status = Some(status),
+                Err(e) => app.set_status(format!("Log status read failed: {e}"), true),
+            }
+            match get_user_logs(None, Some(100)) {
+                Ok(logs) => app.user_logs = logs,
+                Err(e) => app.set_status(format!("Log list read failed: {e}"), true),
+            }
+            match async_runtime::block_on(get_log_preview(app.diagnostics_state())) {
+                Ok(preview) => app.diagnostic_log_preview = preview,
+                Err(e) => app.set_status(format!("Log preview read failed: {e}"), true),
+            }
         }
     });
     ui.add_space(8.0);
@@ -68,7 +77,7 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     ) {
                         Ok(Some(loc)) => {
                             app.data_location = Some(loc);
-                            app.refresh_profiles_and_saves();
+                            app.refresh_profiles_guarded();
                             app.set_status("Updated custom ETS2 data directory.", false);
                         }
                         Ok(None) => {}
@@ -84,7 +93,7 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     ) {
                         Ok(loc) => {
                             app.data_location = Some(loc);
-                            app.refresh_profiles_and_saves();
+                            app.refresh_profiles_guarded();
                             app.set_status("Reset ETS2 data location to OS default.", false);
                         }
                         Err(e) => app.set_status(e, true),
@@ -108,7 +117,7 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     ) {
                         Ok(loc) => {
                             app.data_location = Some(loc);
-                            app.refresh_profiles_and_saves();
+                            app.refresh_profiles_guarded();
                             app.set_status("Applied custom homedir path.", false);
                         }
                         Err(e) => app.set_status(e, true),
@@ -156,10 +165,18 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             ui.heading("Application Logs & Support Bundle");
             ui.horizontal_wrapped(|ui| {
                 if ui.button("📄 Load Log Preview").clicked() {
-                    app.user_logs = get_user_logs(None, Some(100)).unwrap_or_default();
-                    app.diagnostic_log_preview =
-                        async_runtime::block_on(get_log_preview(app.diagnostics_state()))
-                            .unwrap_or_default();
+                    // AS7: surface read failures instead of silently
+                    // showing an empty state.
+                    match get_user_logs(None, Some(100)) {
+                        Ok(logs) => app.user_logs = logs,
+                        Err(e) => app.set_status(format!("Log list read failed: {e}"), true),
+                    }
+                    match async_runtime::block_on(get_log_preview(app.diagnostics_state())) {
+                        Ok(preview) => app.diagnostic_log_preview = preview,
+                        Err(e) => {
+                            app.set_status(format!("Log preview read failed: {e}"), true)
+                        }
+                    }
                 }
                 if ui.button("📤 Export User Logs").clicked() {
                     match export_user_logs(app.app.clone(), app.profile_state()) {
@@ -185,8 +202,23 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     }
                 }
                 if ui.button("Clear User Logs").clicked() {
-                    let _ = clear_user_logs();
-                    app.user_logs.clear();
+                    // P12: report what clearing actually did — the
+                    // result used to be discarded and the view cleared
+                    // even when nothing was deleted.
+                    match clear_user_logs() {
+                        Ok(Some(path)) => {
+                            app.user_logs.clear();
+                            app.set_status(
+                                format!("Cleared user logs (backup: {path})."),
+                                false,
+                            );
+                        }
+                        Ok(None) => {
+                            app.user_logs.clear();
+                            app.set_status("User logs were already empty.", false);
+                        }
+                        Err(e) => app.set_status(format!("Clear logs failed: {e}"), true),
+                    }
                 }
             });
 

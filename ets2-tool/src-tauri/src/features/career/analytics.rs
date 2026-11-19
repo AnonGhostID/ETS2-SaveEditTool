@@ -182,7 +182,9 @@ struct ScannedJobRecord {
     raw_data_json: Option<String>,
 }
 
-pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
+/// D11: schema setup only (no data sync). Read paths use this so a plain read
+/// never mutates the analytics table.
+pub fn ensure_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS career_job_history (
@@ -270,6 +272,13 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
         ],
     )?;
 
+    Ok(())
+}
+
+/// Schema setup plus the job-log backfill. Used by startup sync and by the
+/// explicit scan action; read paths use `ensure_schema` instead.
+pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
+    ensure_schema(conn)?;
     backfill_from_job_log(conn)?;
     Ok(())
 }
@@ -375,7 +384,7 @@ pub fn load_summary(
     conn: &Connection,
     filters: Option<AnalyticsFilters>,
 ) -> Result<AnalyticsSummary, String> {
-    ensure_tables(conn)?;
+    ensure_schema(conn)?;
     let items = load_filtered_items(conn, filters.as_ref())?;
     Ok(build_summary(&items))
 }
@@ -384,7 +393,7 @@ pub fn load_history(
     conn: &Connection,
     filters: Option<AnalyticsFilters>,
 ) -> Result<AnalyticsJobHistoryResponse, String> {
-    ensure_tables(conn)?;
+    ensure_schema(conn)?;
     let all_items = load_filtered_items(conn, None)?;
     let filtered_items = apply_filters(&all_items, filters.as_ref());
 
@@ -548,7 +557,7 @@ pub fn export_csv(
     conn: &Connection,
     filters: Option<AnalyticsFilters>,
 ) -> Result<Option<String>, String> {
-    ensure_tables(conn)?;
+    ensure_schema(conn)?;
     let items = load_filtered_items(conn, filters.as_ref())?;
     let date_stamp = Utc::now().format("%Y-%m-%d").to_string();
     let default_file_name = format!("simnexus_analytics_{}.csv", date_stamp);
@@ -783,6 +792,10 @@ fn build_summary(items: &[AnalyticsJobHistoryItem]) -> AnalyticsSummary {
     let mut total_profit_known = false;
     let mut total_distance = 0.0_f64;
     let mut total_distance_known = false;
+    // D11: distance summed only over profit-known rows, for the per-km
+    // average. Dividing by all rows' distance diluted the figure whenever
+    // some rows lacked profit data.
+    let mut profit_distance_km = 0.0_f64;
 
     for item in items {
         match item.source.as_str() {
@@ -805,6 +818,9 @@ fn build_summary(items: &[AnalyticsJobHistoryItem]) -> AnalyticsSummary {
             total_profit += profit;
             total_profit_known = true;
             summary.known_profit_rows += 1;
+            if let Some(distance) = item.distance_km {
+                profit_distance_km += distance;
+            }
         }
         if let Some(distance) = item.distance_km {
             total_distance += distance;
@@ -826,16 +842,16 @@ fn build_summary(items: &[AnalyticsJobHistoryItem]) -> AnalyticsSummary {
     summary.partial_data = summary.source_counts.partial_save_data > 0
         || summary.known_profit_rows < summary.total_jobs
         || summary.known_cost_rows < summary.total_jobs
-        || summary.known_distance_rows < summary.total_jobs
-        || summary.on_time_deliveries.is_none()
-        || summary.late_deliveries.is_none();
+        || summary.known_distance_rows < summary.total_jobs;
+    // D11: on_time/late deliveries are not tracked (no deadline fields are
+    // copied into the history), so their None must not flag data partial.
 
     if summary.known_profit_rows > 0 {
         summary.average_profit_per_job =
             Some(total_profit as f64 / summary.known_profit_rows as f64);
     }
-    if summary.known_profit_rows > 0 && total_distance_known && total_distance > 0.0 {
-        summary.average_profit_per_km = Some(total_profit as f64 / total_distance);
+    if summary.known_profit_rows > 0 && profit_distance_km > 0.0 {
+        summary.average_profit_per_km = Some(total_profit as f64 / profit_distance_km);
     }
 
     summary

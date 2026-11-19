@@ -201,5 +201,10 @@ fn open_runtime_db(career: &CareerState) -> Result<Connection, String> {
         .map_err(|_| "Career db_path lock poisoned".to_string())?
         .clone()
         .ok_or_else(|| "Career database path not initialized".to_string())?;
-    Connection::open(db_path).map_err(|error| error.to_string())
+    let conn = Connection::open(db_path).map_err(|error| error.to_string())?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|error| error.to_string())?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|error| error.to_string())?;
+    Ok(conn)
 }

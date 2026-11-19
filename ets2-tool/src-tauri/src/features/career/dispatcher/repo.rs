@@ -3,9 +3,10 @@ use rusqlite::{Connection, params};
 
 use super::models::{
     DISPATCHER_ACTIVE_JOB_STATUSES, DISPATCHER_ALL_JOB_STATUSES, DISPATCHER_BUSY_JOB_STATUSES,
-    DISPATCHER_HISTORY_JOB_STATUSES, DISPATCHER_OPEN_JOB_STATUSES, DispatcherHistoryResponse,
-    DispatcherHistorySummary, DispatcherJobDetails, DispatcherJobFilter,
-    DispatcherJobsBySaveContextResponse, DispatcherMarketJob, DispatcherSaveContext,
+    DISPATCHER_HISTORY_JOB_STATUSES, DISPATCHER_MARKET_JOB_STATUSES,
+    DISPATCHER_OPEN_JOB_STATUSES, DispatcherHistoryResponse, DispatcherHistorySummary,
+    DispatcherJobDetails, DispatcherJobFilter, DispatcherJobsBySaveContextResponse,
+    DispatcherMarketJob, DispatcherSaveContext,
 };
 use super::{
     build_dispatcher_route_reference, count_dispatcher_jobs_by_status, dispatcher_equipment_ok,
@@ -113,8 +114,10 @@ pub(super) fn dispatcher_get_market_jobs(
 ) -> Result<Vec<DispatcherMarketJob>, String> {
     prepare_dispatcher_system(conn)?;
     super::ensure_dispatcher_market_jobs(conn, save_context, false)?;
+    // D13: only `open` jobs are actionable from the market list; assigned,
+    // prepared, injected and failed rows cannot be accepted from here.
     let mut rows =
-        list_dispatcher_jobs_by_status(conn, DISPATCHER_OPEN_JOB_STATUSES, 80, save_context)?;
+        list_dispatcher_jobs_by_status(conn, DISPATCHER_MARKET_JOB_STATUSES, 80, save_context)?;
 
     if let Some(filter) = filter {
         rows = rows

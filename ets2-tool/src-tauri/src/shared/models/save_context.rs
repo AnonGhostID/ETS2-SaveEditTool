@@ -63,8 +63,17 @@ pub fn build_save_session_id(
     let save_reference = save_reference?;
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    normalize_reference(profile_reference).hash(&mut hasher);
-    normalize_reference(save_reference).hash(&mut hasher);
+    // P10: Windows paths are case-insensitive, so the same save spelled
+    // with different casing must map to the same session ID, or backup /
+    // undo history appears missing. Lowercase only the hash input — the
+    // references themselves stay case-preserving so they remain valid
+    // paths on case-sensitive filesystems.
+    normalize_reference(profile_reference)
+        .to_ascii_lowercase()
+        .hash(&mut hasher);
+    normalize_reference(save_reference)
+        .to_ascii_lowercase()
+        .hash(&mut hasher);
 
     Some(format!("savectx-{:016x}", hasher.finish()))
 }

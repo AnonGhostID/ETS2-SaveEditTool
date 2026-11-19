@@ -104,7 +104,10 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                         Ok(()) => {
                             app.reload_active_save_data();
                             app.set_status(
-                                format!("Updated player money to €{}.", app.edit_money_input),
+                                format!(
+                                    "Staged money €{} (press Save to write).",
+                                    app.edit_money_input
+                                ),
                                 false,
                             );
                         }
@@ -133,11 +136,18 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.label("Truck XP:");
-                ui.add(
-                    egui::DragValue::new(&mut app.edit_xp_input)
-                        .speed(1_000)
-                        .range(0..=999_999_999_i64),
-                );
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut app.edit_xp_input)
+                            .speed(1_000)
+                            .range(0..=999_999_999_i64),
+                    )
+                    .changed()
+                {
+                    // L2: the batch applies whichever of XP / Target
+                    // Level was edited last.
+                    app.batch_level_edited_last = false;
+                }
                 if ui.button("Apply XP").clicked() {
                     match edit_player_experience(
                         app.edit_xp_input,
@@ -148,9 +158,15 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                         Ok(()) => {
                             app.reload_active_save_data();
                             app.set_status(
-                                format!("Updated player XP to {}.", app.edit_xp_input),
+                                format!(
+                                    "Staged truck XP {} (press Save to write).",
+                                    app.edit_xp_input
+                                ),
                                 false,
                             );
+                        }
+                        Err(e) if crate::gui::is_no_change_error(&e) => {
+                            app.set_status("Truck XP is already at that value.", false);
                         }
                         Err(e) => app.set_status(format!("Failed to update XP: {e}"), true),
                     }
@@ -159,7 +175,14 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
 
             ui.horizontal(|ui| {
                 ui.label("Target Level:");
-                ui.add(egui::DragValue::new(&mut app.edit_level_input).range(0..=500));
+                if ui
+                    .add(egui::DragValue::new(&mut app.edit_level_input).range(0..=256))
+                    .changed()
+                {
+                    // L2: the batch applies whichever of XP / Target
+                    // Level was edited last.
+                    app.batch_level_edited_last = true;
+                }
                 if ui.button("Apply Level").clicked() {
                     match edit_level(
                         app.edit_level_input,
@@ -170,26 +193,46 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                         Ok(()) => {
                             app.reload_active_save_data();
                             app.set_status(
-                                format!("Updated player level to {}.", app.edit_level_input),
+                                format!(
+                                    "Staged level {} (press Save to write).",
+                                    app.edit_level_input
+                                ),
                                 false,
                             );
+                        }
+                        Err(e) if crate::gui::is_no_change_error(&e) => {
+                            app.set_status("Level is already at that value.", false);
                         }
                         Err(e) => app.set_status(format!("Failed to update level: {e}"), true),
                     }
                 }
                 if ui.button("Apply Money + XP + Level Batch").clicked() {
+                    // L2: pass only the last-edited of level/XP — the
+                    // backend resolves level -> XP only when XP is
+                    // unset, and reports the level actually written.
+                    let (level, xp) = if app.batch_level_edited_last {
+                        (Some(app.edit_level_input.max(0) as u32), None)
+                    } else {
+                        (None, Some(app.edit_xp_input.max(0) as u64))
+                    };
                     match apply_custom_reset_values(
-                        Some(app.edit_level_input.max(0) as u32),
-                        Some(app.edit_xp_input.max(0) as u64),
+                        level,
+                        xp,
                         Some(app.edit_money_input),
                         app.profile_state(),
                         app.profile_cache(),
                         app.decrypt_cache(),
                     ) {
                         Ok(res) => {
+                            app.batch_level_edited_last = false;
                             app.reload_active_save_data();
+                            let what = match (res.applied_level, res.applied_xp) {
+                                (Some(level), _) => format!("level {level}"),
+                                (None, Some(xp)) => format!("XP {xp}"),
+                                (None, None) => "money".to_string(),
+                            };
                             app.set_status(
-                                format!("Batch applied (backup {}).", res.undo_backup_id),
+                                format!("Batch staged ({what}; backup {}).", res.undo_backup_id),
                                 false,
                             );
                         }
@@ -199,12 +242,13 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             });
 
             ui.separator();
-            ui.heading("Player Skills (0 – 6)");
+            ui.heading("Player Skills (ADR 0 – 63, others 0 – 6)");
             let mut skill_to_save: Option<(&'static str, i64)> = None;
 
             ui.horizontal(|ui| {
                 ui.label("ADR (Hazardous):");
-                ui.add(egui::Slider::new(&mut app.skill_adr, 0..=6));
+                // S1: ADR maxes at 63 in the save, not 6.
+                ui.add(egui::Slider::new(&mut app.skill_adr, 0..=63));
                 if ui.small_button("Save").clicked() {
                     skill_to_save = Some(("adr", app.skill_adr));
                 }
@@ -253,29 +297,55 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     app.profile_cache(),
                     app.decrypt_cache(),
                 ) {
-                    Ok(()) => app.set_status(format!("Saved skill `{key}` = {val}"), false),
+                    Ok(()) => app.set_status(
+                        format!("Staged skill `{key}` = {val} (press Save to write)."),
+                        false,
+                    ),
                     Err(e) => app.set_status(format!("Skill update failed: {e}"), true),
                 }
             }
 
-            if ui.button("Max All Skills (Set all to 6)").clicked() {
-                app.skill_adr = 6;
+            if ui.button("Max All Skills (ADR 63, others 6)").clicked() {
+                // S1/S4: ADR maxes at 63, the other five skills at 6;
+                // surface per-skill failures instead of silently
+                // continuing and claiming success.
+                let mut failures: Vec<String> = Vec::new();
+                for (key, max) in [
+                    ("adr", 63),
+                    ("long_dist", 6),
+                    ("heavy", 6),
+                    ("fragile", 6),
+                    ("urgent", 6),
+                    ("mechanical", 6),
+                ] {
+                    if let Err(err) = edit_skill_value(
+                        key.to_string(),
+                        max,
+                        app.profile_state(),
+                        app.profile_cache(),
+                        app.decrypt_cache(),
+                    ) {
+                        failures.push(format!("{key}: {err}"));
+                    }
+                }
+                app.skill_adr = 63;
                 app.skill_long_dist = 6;
                 app.skill_heavy = 6;
                 app.skill_fragile = 6;
                 app.skill_urgent = 6;
                 app.skill_mechanical = 6;
-                for key in ["adr", "long_dist", "heavy", "fragile", "urgent", "mechanical"] {
-                    let _ = edit_skill_value(
-                        key.to_string(),
-                        6,
-                        app.profile_state(),
-                        app.profile_cache(),
-                        app.decrypt_cache(),
+                app.reload_active_save_data();
+                if failures.is_empty() {
+                    app.set_status(
+                        "Staged all skills at maximum (ADR 63, others 6).",
+                        false,
+                    );
+                } else {
+                    app.set_status(
+                        format!("Max All Skills failed for: {}", failures.join("; ")),
+                        true,
                     );
                 }
-                app.reload_active_save_data();
-                app.set_status("All 6 skills set to maximum (6).", false);
             }
         });
 
@@ -303,26 +373,40 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             ui.horizontal(|ui| {
                 let mut dev_bool = app.cfg_developer != 0;
                 if ui.checkbox(&mut dev_bool, "Developer Mode (`g_developer`)").changed() {
-                    app.cfg_developer = i64::from(dev_bool);
-                    let _ = edit_developer_value(
-                        app.cfg_developer,
+                    // S3: surface a failed write instead of discarding
+                    // it; the checkbox reverts next frame because the
+                    // stored value is only updated on success.
+                    let new_value = i64::from(dev_bool);
+                    match edit_developer_value(
+                        new_value,
                         app.profile_state(),
                         app.profile_cache(),
                         app.decrypt_cache(),
-                    );
+                    ) {
+                        Ok(()) => app.cfg_developer = new_value,
+                        Err(e) => {
+                            app.set_status(format!("Developer mode change failed: {e}"), true)
+                        }
+                    }
                 }
             });
 
             ui.horizontal(|ui| {
                 let mut con_bool = app.cfg_console != 0;
                 if ui.checkbox(&mut con_bool, "Developer Console (`g_console`)").changed() {
-                    app.cfg_console = i64::from(con_bool);
-                    let _ = edit_console_value(
-                        app.cfg_console,
+                    // S3: see above.
+                    let new_value = i64::from(con_bool);
+                    match edit_console_value(
+                        new_value,
                         app.profile_state(),
                         app.profile_cache(),
                         app.decrypt_cache(),
-                    );
+                    ) {
+                        Ok(()) => app.cfg_console = new_value,
+                        Err(e) => {
+                            app.set_status(format!("Developer console change failed: {e}"), true)
+                        }
+                    }
                 }
             });
 
@@ -335,13 +419,20 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     )
                     .changed()
                 {
-                    app.cfg_parking_doubles = i64::from(doubles_bool);
-                    let _ = edit_parking_doubles_value(
-                        app.cfg_parking_doubles,
+                    // S3: see above.
+                    let new_value = i64::from(doubles_bool);
+                    match edit_parking_doubles_value(
+                        new_value,
                         app.profile_state(),
                         app.profile_cache(),
                         app.decrypt_cache(),
-                    );
+                    ) {
+                        Ok(()) => app.cfg_parking_doubles = new_value,
+                        Err(e) => app.set_status(
+                            format!("Double trailer parking change failed: {e}"),
+                            true,
+                        ),
+                    }
                 }
             });
 

@@ -1,9 +1,7 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
 
 use chrono::Utc;
-use rusqlite::{Connection as RusqliteConnection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, Sqlite, SqlitePool};
@@ -29,54 +27,17 @@ use crate::features::ets2save::sii_codec::decode_sii_lines;
 use crate::features::ets2save::snapshot::{self, SaveSnapshotInput};
 use crate::features::telemetry::events::TelemetryJobEventPayload;
 use crate::shared::models::save_context::build_save_session_id;
-use crate::shared::sqlite_schema::ensure_columns;
 use crate::state::AppProfileState;
 
-const RUNTIME_MIGRATIONS: [(&str, &str); 10] = [
-    (
-        "2026-04-06_create_ets_profiles.sql",
-        include_str!("../../db/migrations/2026-04-06_create_ets_profiles.sql"),
-    ),
-    (
-        "2026-04-06_create_ets_saves.sql",
-        include_str!("../../db/migrations/2026-04-06_create_ets_saves.sql"),
-    ),
-    (
-        "2026-04-06_create_ets_job_links.sql",
-        include_str!("../../db/migrations/2026-04-06_create_ets_job_links.sql"),
-    ),
-    (
-        "2026-04-06_create_ets_job_link_audit.sql",
-        include_str!("../../db/migrations/2026-04-06_create_ets_job_link_audit.sql"),
-    ),
-    (
-        "2026-04-06_create_vtc_job_ledger.sql",
-        include_str!("../../db/migrations/2026-04-06_create_vtc_job_ledger.sql"),
-    ),
-    (
-        "2026-04-06_create_ets2_datasets.sql",
-        include_str!("../../db/migrations/2026-04-06_create_ets2_datasets.sql"),
-    ),
-    (
-        "2026-04-06_create_ets_save_snapshot.sql",
-        include_str!("../../db/migrations/2026-04-06_create_ets_save_snapshot.sql"),
-    ),
-    (
-        "2026-04-06_add_resolved_tokens_to_ets_job_links.sql",
-        include_str!("../../db/migrations/2026-04-06_add_resolved_tokens_to_ets_job_links.sql"),
-    ),
-    (
-        "2026-04-06_add_cargo_resolution_to_ets_job_links.sql",
-        include_str!("../../db/migrations/2026-04-06_add_cargo_resolution_to_ets_job_links.sql"),
-    ),
-    (
-        "2026-04-07_add_vtc_local_persistence.sql",
-        include_str!("../../db/migrations/2026-04-07_add_vtc_local_persistence.sql"),
-    ),
-];
-
 pub async fn create_pool(db_path: &std::path::Path) -> Result<SqlitePool, AppError> {
-    run_runtime_migrations(db_path)?;
+    // DB1: migrations run through the single shared runner in db::sqlite so
+    // this pool can never see a different (older, smaller) migration set.
+    crate::db::sqlite::run_runtime_migrations(db_path).map_err(|error| {
+        AppError::new(
+            AppErrorCode::WriteFailed,
+            format!("run runtime migrations failed: {}", error),
+        )
+    })?;
 
     let options = SqliteConnectOptions::new()
         .filename(db_path)
@@ -87,114 +48,6 @@ pub async fn create_pool(db_path: &std::path::Path) -> Result<SqlitePool, AppErr
         .connect_with(options)
         .await?;
     Ok(pool)
-}
-
-fn run_runtime_migrations(db_path: &Path) -> Result<(), AppError> {
-    let mut connection = RusqliteConnection::open(db_path).map_err(|error| {
-        AppError::new(
-            AppErrorCode::WriteFailed,
-            format!("open migration db failed: {}", error),
-        )
-    })?;
-    connection
-        .busy_timeout(std::time::Duration::from_secs(5))
-        .map_err(|error| {
-            AppError::new(
-                AppErrorCode::WriteFailed,
-                format!("set migration busy timeout failed: {}", error),
-            )
-        })?;
-    connection
-        .execute_batch(
-            r#"
-        PRAGMA foreign_keys = ON;
-        CREATE TABLE IF NOT EXISTS ets_feature_migrations (
-            filename TEXT PRIMARY KEY,
-            applied_at_utc TEXT NOT NULL
-        );
-        "#,
-        )
-        .map_err(|error| {
-            AppError::new(
-                AppErrorCode::WriteFailed,
-                format!("prepare migration table failed: {}", error),
-            )
-        })?;
-
-    let tx = connection.transaction().map_err(|error| {
-        AppError::new(
-            AppErrorCode::WriteFailed,
-            format!("begin migration transaction failed: {}", error),
-        )
-    })?;
-
-    for (filename, sql) in RUNTIME_MIGRATIONS {
-        let already_applied: Option<String> = tx
-            .query_row(
-                "SELECT filename FROM ets_feature_migrations WHERE filename = ?1",
-                [filename],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|error| {
-                AppError::new(
-                    AppErrorCode::WriteFailed,
-                    format!("check migration state failed for {}: {}", filename, error),
-                )
-            })?;
-        if already_applied.is_some() {
-            continue;
-        }
-
-        tx.execute_batch(&sql).map_err(|error| {
-            AppError::new(
-                AppErrorCode::WriteFailed,
-                format!("apply migration {} failed: {}", filename, error),
-            )
-        })?;
-        tx.execute(
-            "INSERT INTO ets_feature_migrations (filename, applied_at_utc) VALUES (?1, ?2)",
-            rusqlite::params![filename, Utc::now().to_rfc3339()],
-        )
-        .map_err(|error| {
-            AppError::new(
-                AppErrorCode::WriteFailed,
-                format!("record migration {} failed: {}", filename, error),
-            )
-        })?;
-    }
-
-    tx.commit().map_err(|error| {
-        AppError::new(
-            AppErrorCode::WriteFailed,
-            format!("commit migration transaction failed: {}", error),
-        )
-    })?;
-    ensure_runtime_columns(&connection)?;
-    Ok(())
-}
-
-fn ensure_runtime_columns(conn: &RusqliteConnection) -> Result<(), AppError> {
-    ensure_columns(
-        conn,
-        "ets_save_depots",
-        &[
-            ("discovered", "INTEGER NOT NULL DEFAULT 1"),
-            ("job_offer_count", "INTEGER NOT NULL DEFAULT 0"),
-        ],
-    )
-    .map_err(|error| AppError::new(AppErrorCode::WriteFailed, error))?;
-    conn.execute(
-        "UPDATE ets_save_depots SET job_offer_count = 0 WHERE job_offer_count IS NULL",
-        [],
-    )
-    .map_err(|error| {
-        AppError::new(
-            AppErrorCode::WriteFailed,
-            format!("backfill ets_save_depots job_offer_count failed: {}", error),
-        )
-    })?;
-    Ok(())
 }
 
 pub async fn ets_get_last_quicksave(
@@ -282,7 +135,13 @@ pub async fn prepare_job_link(
         )?;
         let offer_pointer = extract_job_offer_pointer(&lines, company_block)?;
         let offer_range = find_job_offer_data_block(&lines, &offer_pointer)?;
-        let existing_link = ensure_prepare_link_state(&mut connection, vtc_job_id).await?;
+        let existing_link = ensure_prepare_link_state(
+            &mut connection,
+            vtc_job_id,
+            &profile.profile_id,
+            &save_slot.save_id,
+        )
+        .await?;
         let link_id = existing_link
             .as_ref()
             .map(|link| link.link_id.clone())
@@ -397,16 +256,30 @@ pub async fn write_job_to_quicksave(
     let result = async {
         let link = load_job_link_by_id(&mut connection, link_id).await?;
         let save_slot = load_save_slot(&mut connection, &link.save_id).await?;
-        let before_sha256 = file_sha256_hex(std::path::Path::new(&save_slot.game_sii_path))?;
+        let game_sii_path = std::path::Path::new(&save_slot.game_sii_path);
+        let before_sha256 = file_sha256_hex(game_sii_path)?;
         let pointers = write_job_offer_patch(
-            std::path::Path::new(&save_slot.game_sii_path),
+            game_sii_path,
             &link.src_company,
             &link.src_city,
             &link.patch,
         )?;
-        let after_sha256 = file_sha256_hex(std::path::Path::new(&save_slot.game_sii_path))?;
+        let after_sha256 = after_write_sha256_hex(game_sii_path, pointers.staged)?;
         let now = Utc::now().to_rfc3339();
         let validation = pointers.validation.clone();
+        // D5: a failed post-write validation must not commit the job as
+        // injected. Bail out before any status update; the transaction
+        // rolls back, the link stays Prepared (re-writable), and the
+        // caller reports the failure instead of "written".
+        if !validation.valid {
+            return Err(AppError::new(
+                AppErrorCode::PostWriteValidationFailed,
+                validation
+                    .validation_error
+                    .clone()
+                    .unwrap_or_else(|| "post-write validation failed".to_string()),
+            ));
+        }
         let expected_load_path = Some(save_slot.save_path.clone());
         let load_path_warning = link
             .save_offer_template
@@ -470,7 +343,13 @@ pub async fn write_job_to_quicksave(
                 .map(|path| path.display().to_string()),
             before_sha256,
             after_sha256,
-            write_mode: "overwrite_existing_offer".to_string(),
+            // D15/R5: say so when the patch only reached the staging
+            // overlay instead of the save file on disk.
+            write_mode: if pointers.staged {
+                "staged_pending_save".to_string()
+            } else {
+                "overwrite_existing_offer".to_string()
+            },
             job_info_updated: pointers.job_info_updated,
             post_write_valid: validation.valid,
             validation: validation.clone(),
@@ -517,6 +396,22 @@ fn file_sha256_hex(path: &std::path::Path) -> Result<String, AppError> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+/// R5/D15: the "after" hash must describe the content the write
+/// actually produced. Under staging the disk is untouched, so a second
+/// disk read would equal `before_sha256` and hide the write; hash the
+/// staged overlay instead. Falls back to the disk read when no staged
+/// content exists for the path.
+fn after_write_sha256_hex(path: &std::path::Path, staged: bool) -> Result<String, AppError> {
+    if staged {
+        if let Some(content) = crate::shared::save_session::staged_content(path) {
+            let mut hasher = Sha256::new();
+            hasher.update(content.as_bytes());
+            return Ok(format!("{:x}", hasher.finalize()));
+        }
+    }
+    file_sha256_hex(path)
+}
+
 pub async fn ets_get_job_link_status(
     pool: &SqlitePool,
     vtc_job_id: &str,
@@ -534,9 +429,37 @@ pub async fn handle_telemetry_job_event(
         return Ok(());
     }
 
+    // D3: a telemetry event belongs to the profile the game is running,
+    // so it must only complete links for that profile. Resolve the
+    // active profile before touching any link; without one, no link can
+    // be safely matched and the event is ignored instead of completing
+    // the newest global match (possibly another profile's job).
+    let active_profile = app
+        .try_state::<AppProfileState>()
+        .and_then(crate::shared::current_profile::get_current_profile);
+    let Some(active_profile) = active_profile else {
+        crate::dev_log!("[ets2save] telemetry job event ignored: no active profile");
+        return Ok(());
+    };
+    // Same normalization the locator applies when the profile row is
+    // upserted (trim + backslash to slash).
+    let normalized_profile = active_profile.trim().replace('\\', "/");
+
     let mut connection = begin_immediate(pool).await?;
     let result = async {
-        let maybe_link = find_matching_link(&mut connection, payload).await?;
+        let profile_id: Option<String> = sqlx::query_scalar(
+            "SELECT profile_id FROM ets_profiles WHERE LOWER(profile_path) = LOWER(?1)",
+        )
+        .bind(&normalized_profile)
+        .fetch_optional(&mut *connection)
+        .await?;
+        let Some(profile_id) = profile_id else {
+            crate::dev_log!(
+                "[ets2save] telemetry job event ignored: active profile has no ets profile row"
+            );
+            return Ok(None);
+        };
+        let maybe_link = find_matching_link(&mut connection, payload, &profile_id).await?;
         let Some(link) = maybe_link else {
             return Ok(None);
         };
@@ -720,13 +643,24 @@ struct PreparedJobLinkUpsert<'a> {
 async fn ensure_prepare_link_state(
     connection: &mut sqlx::pool::PoolConnection<Sqlite>,
     vtc_job_id: &str,
+    profile_id: &str,
+    save_id: &str,
 ) -> Result<Option<EtsJobLink>, AppError> {
     let existing = load_job_link_by_vtc_job_id_optional(connection, vtc_job_id).await?;
     if let Some(link) = existing.as_ref() {
-        if !matches!(
-            link.status,
-            EtsJobLinkStatus::Pending | EtsJobLinkStatus::Error | EtsJobLinkStatus::Completed
-        ) {
+        // D4: a link prepared for a different profile or quicksave slot
+        // is stale for this context, so re-prepare may re-point it at
+        // the current quicksave (the upsert below overwrites the
+        // profile/save/patch and resets the status to Prepared). A
+        // non-terminal link for THIS save stays protected: re-preparing
+        // it would clobber an in-flight write.
+        let stale_for_context = link.profile_id != profile_id || link.save_id != save_id;
+        if !stale_for_context
+            && !matches!(
+                link.status,
+                EtsJobLinkStatus::Pending | EtsJobLinkStatus::Error | EtsJobLinkStatus::Completed
+            )
+        {
             return Err(AppError::new(
                 AppErrorCode::JobLinkConflict,
                 format!(
@@ -2011,16 +1945,22 @@ async fn insert_vtc_job_ledger(
 async fn find_matching_link(
     connection: &mut sqlx::pool::PoolConnection<Sqlite>,
     payload: &TelemetryJobEventPayload,
+    profile_id: &str,
 ) -> Result<Option<EtsJobLink>, AppError> {
+    // D3: scoped to one profile. Links are always prepared against the
+    // profile's quicksave, so the profile filter is also the save
+    // filter for this flow.
     let rows = sqlx::query(
         r#"
         SELECT *
         FROM ets_job_links
         WHERE status IN ('prepared', 'written', 'requires_load', 'synced')
+          AND profile_id = ?1
         ORDER BY updated_at_utc DESC
         LIMIT 20
         "#,
     )
+    .bind(profile_id)
     .fetch_all(&mut **connection)
     .await?;
 

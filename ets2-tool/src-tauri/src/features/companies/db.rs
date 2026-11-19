@@ -7,7 +7,7 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
         r#"
         CREATE TABLE IF NOT EXISTS companies (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            owner_user_id INTEGER NOT NULL,
+            owner_user_id INTEGER NOT NULL REFERENCES users(id),
             name TEXT NOT NULL,
             logo_path TEXT,
             logo_blob BLOB,
@@ -31,8 +31,8 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
 
         CREATE TABLE IF NOT EXISTS company_members (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            company_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
+            company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             member_role TEXT NOT NULL,
             joined_at TEXT NOT NULL,
             salary_override INTEGER,

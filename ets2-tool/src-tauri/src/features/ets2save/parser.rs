@@ -458,17 +458,44 @@ fn parse_bool_field(lines: &[String], range: UnitRange, field: &str) -> Option<b
 }
 
 fn parse_array_values(lines: &[String], prefix: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for line in lines {
+    // R3: read the array from the economy block only, ordered by index and
+    // capped at the declared count. The old global scan also picked up
+    // same-named arrays from other units, and returned values in file order
+    // with no count cap, so stale trailing entries leaked in.
+    let Some(field) = prefix.strip_suffix('[') else {
+        return Vec::new();
+    };
+    let (start, end, declared_count) = match find_unit_range(lines, "economy :") {
+        Some(range) => (
+            range.start,
+            range.end,
+            extract_field_value(lines, range, field)
+                .and_then(|value| value.trim().parse::<usize>().ok()),
+        ),
+        // No economy block (unexpected save shape): keep the legacy
+        // whole-file scan rather than failing the whole template read.
+        None => (0, lines.len(), None),
+    };
+    let mut entries: Vec<(usize, String)> = Vec::new();
+    for line in &lines[start..end.min(lines.len())] {
         let trimmed = line.trim();
-        if !trimmed.starts_with(prefix) {
+        let Some(rest) = trimmed.strip_prefix(prefix) else {
             continue;
-        }
-        if let Some((_, value)) = trimmed.split_once(':') {
-            out.push(value.trim().trim_matches('"').to_string());
-        }
+        };
+        let Some((index_text, value)) = rest.split_once("]:") else {
+            continue;
+        };
+        let Ok(index) = index_text.trim().parse::<usize>() else {
+            continue;
+        };
+        entries.push((index, value.trim().trim_matches('"').to_string()));
     }
-    out
+    entries.sort_by_key(|entry| entry.0);
+    entries.dedup_by_key(|entry| entry.0);
+    if let Some(count) = declared_count {
+        entries.truncate(count);
+    }
+    entries.into_iter().map(|entry| entry.1).collect()
 }
 
 fn dice_similarity(a: &str, b: &str) -> f64 {
@@ -529,24 +556,20 @@ pub fn extract_job_offer_pointer(
         ));
     }
 
-    for line in &lines[company_block.start..=company_block.end] {
-        let trimmed = line.trim();
-        if trimmed.starts_with("job_offer[0]:") {
-            return trimmed
-                .split_once(':')
-                .map(|(_, value)| value.trim().to_string())
-                .ok_or_else(|| {
-                    AppError::new(
-                        AppErrorCode::InvalidToken,
-                        "Could not parse job_offer[0] pointer",
-                    )
-                });
+    // R1: slot 0 is not guaranteed to hold a live offer: the game can leave a
+    // stale pointer in the first slot while a later slot holds the usable
+    // offer. Take the first slot (in index order) whose job_offer_data block
+    // actually exists, mirroring the slot selection in the write path.
+    let pointers = list_job_offer_pointers(lines, company_block);
+    for entry in &pointers {
+        if find_job_offer_data_block(lines, &entry.pointer).is_ok() {
+            return Ok(entry.pointer.clone());
         }
     }
 
     Err(AppError::new(
         AppErrorCode::InvalidToken,
-        "job_offer[0] pointer missing",
+        "No job_offer slot has a job_offer_data block",
     ))
 }
 
@@ -693,12 +716,28 @@ fn extract_job_offer_count(lines: &[String], company_block: UnitRange) -> Result
     ))
 }
 
+/// R2: a unit header line matches `token` only when the token is followed by
+/// a terminator (whitespace, `{`, `:` or end of line). A bare `starts_with`
+/// would resolve `company.volatile.tradeaux.berlin2` for a `...berlin`
+/// lookup, or the wrong `player_job` unit for a pointer that is a prefix of
+/// another pointer.
+pub fn line_matches_unit_token(line: &str, token: &str) -> bool {
+    let trimmed = line.trim();
+    let Some(rest) = trimmed.strip_prefix(token) else {
+        return false;
+    };
+    matches!(
+        rest.chars().next(),
+        None | Some(' ') | Some('\t') | Some('{') | Some(':')
+    )
+}
+
 fn find_unit_range(lines: &[String], token: &str) -> Option<UnitRange> {
     let mut start_index = None;
     let mut depth = 0_i32;
 
     for (index, line) in lines.iter().enumerate() {
-        if start_index.is_none() && line.trim().starts_with(token) {
+        if start_index.is_none() && line_matches_unit_token(line, token) {
             start_index = Some(index);
         }
 

@@ -2,6 +2,8 @@ use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
 use chrono::{Duration, Utc};
+use rusqlite::params_from_iter;
+use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
@@ -1024,59 +1026,62 @@ fn apply_dispatcher_generation_config(
     load_dispatcher_generation_config(conn)
 }
 
+/// D9: bind an optional text value as a SQL parameter (NULL when absent).
+fn text_or_null(value: Option<&str>) -> Value {
+    match value {
+        Some(text) => Value::Text(text.to_string()),
+        None => Value::Null,
+    }
+}
+
 fn count_dispatcher_jobs_by_status(
     conn: &Connection,
     statuses: &[&str],
     save_context: &DispatcherSaveContext,
     source_type: Option<&str>,
 ) -> Result<i64, String> {
-    if save_context.profile_reference.is_none() {
+    if save_context.profile_reference.is_none() || statuses.is_empty() {
         return Ok(0);
     }
 
-    let in_clause = statuses
-        .iter()
-        .map(|status| format!("'{}'", status))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let source_clause = source_type
-        .map(|value| format!(" AND source_type = '{}'", value))
-        .unwrap_or_default();
+    // D9: the status list and source type are bound as parameters, never
+    // interpolated into the SQL text.
+    let placeholders = vec!["?"; statuses.len()].join(", ");
+    let source_clause = if source_type.is_some() {
+        " AND source_type = ?"
+    } else {
+        ""
+    };
     let sql = format!(
         "
         SELECT COUNT(*)
         FROM dispatcher_jobs
-        WHERE status IN ({in_clause})
-          AND (?1 IS NULL OR profile_reference = ?1)
-          AND (?2 IS NULL OR save_reference = ?2)
+        WHERE status IN ({placeholders})
+          AND (? IS NULL OR profile_reference = ?)
+          AND (? IS NULL OR save_reference = ?)
           {source_clause}
         "
     );
 
-    let exact_count = conn
-        .query_row(
-            &sql,
-            params![
-                save_context.profile_reference.as_deref(),
-                save_context.save_reference.as_deref()
-            ],
-            |row| row.get(0),
-        )
-        .map_err(|e| e.to_string())?;
-
-    if exact_count > 0 || save_context.save_reference.is_none() {
-        return Ok(exact_count);
+    let mut values: Vec<Value> = statuses
+        .iter()
+        .map(|status| Value::Text(status.to_string()))
+        .collect();
+    let profile = text_or_null(save_context.profile_reference.as_deref());
+    let save = text_or_null(save_context.save_reference.as_deref());
+    values.push(profile.clone());
+    values.push(profile);
+    values.push(save.clone());
+    values.push(save);
+    if let Some(source) = source_type {
+        values.push(Value::Text(source.to_string()));
     }
 
-    conn.query_row(
-        &sql,
-        params![
-            save_context.profile_reference.as_deref(),
-            Option::<&str>::None
-        ],
-        |row| row.get(0),
-    )
-    .map_err(|e| e.to_string())
+    // D6: no save_reference = NULL fallback retry. The old fallback leaked
+    // jobs from other saves into this save's counts whenever the exact
+    // context had no rows.
+    conn.query_row(&sql, params_from_iter(values), |row| row.get(0))
+        .map_err(|e| e.to_string())
 }
 
 fn count_dispatcher_company_jobs(
@@ -1085,52 +1090,41 @@ fn count_dispatcher_company_jobs(
     statuses: &[&str],
     save_context: &DispatcherSaveContext,
 ) -> Result<i64, String> {
-    if save_context.profile_reference.is_none() {
+    if save_context.profile_reference.is_none() || statuses.is_empty() {
         return Ok(0);
     }
 
-    let in_clause = statuses
-        .iter()
-        .map(|status| format!("'{}'", status))
-        .collect::<Vec<_>>()
-        .join(", ");
+    // D9: the status list is bound as parameters, never interpolated into
+    // the SQL text.
+    let placeholders = vec!["?"; statuses.len()].join(", ");
     let sql = format!(
         "
         SELECT COUNT(*)
         FROM dispatcher_jobs
-        WHERE company_id = ?1
-          AND status IN ({in_clause})
-          AND (?2 IS NULL OR profile_reference = ?2)
-          AND (?3 IS NULL OR save_reference = ?3)
+        WHERE company_id = ?
+          AND status IN ({placeholders})
+          AND (? IS NULL OR profile_reference = ?)
+          AND (? IS NULL OR save_reference = ?)
         "
     );
 
-    let exact_count = conn
-        .query_row(
-            &sql,
-            params![
-                company_id,
-                save_context.profile_reference.as_deref(),
-                save_context.save_reference.as_deref()
-            ],
-            |row| row.get(0),
-        )
-        .map_err(|e| e.to_string())?;
+    let mut values: Vec<Value> = vec![Value::Text(company_id.to_string())];
+    values.extend(
+        statuses
+            .iter()
+            .map(|status| Value::Text(status.to_string())),
+    );
+    let profile = text_or_null(save_context.profile_reference.as_deref());
+    let save = text_or_null(save_context.save_reference.as_deref());
+    values.push(profile.clone());
+    values.push(profile);
+    values.push(save.clone());
+    values.push(save);
 
-    if exact_count > 0 || save_context.save_reference.is_none() {
-        return Ok(exact_count);
-    }
-
-    conn.query_row(
-        &sql,
-        params![
-            company_id,
-            save_context.profile_reference.as_deref(),
-            Option::<&str>::None
-        ],
-        |row| row.get(0),
-    )
-    .map_err(|e| e.to_string())
+    // D6: no save_reference = NULL fallback retry (see
+    // count_dispatcher_jobs_by_status).
+    conn.query_row(&sql, params_from_iter(values), |row| row.get(0))
+        .map_err(|e| e.to_string())
 }
 
 fn dispatcher_generation_due(last_generated_at_utc: Option<&str>, interval_minutes: i64) -> bool {
@@ -1315,37 +1309,9 @@ fn load_dispatcher_open_signatures(
         signatures.insert(row.map_err(|e| e.to_string())?);
     }
 
-    if !signatures.is_empty() || save_context.save_reference.is_none() {
-        return Ok(signatures);
-    }
-
-    let rows = stmt
-        .query_map(
-            params![
-                save_context.profile_reference.as_deref(),
-                Option::<&str>::None
-            ],
-            |row| {
-                let company_id: String = row.get(0)?;
-                let origin_city: String = row.get(1)?;
-                let destination_city: String = row.get(2)?;
-                let cargo_type: String = row.get(3)?;
-                let job_type: String = row.get(4)?;
-                Ok(dispatcher_job_signature(
-                    &company_id,
-                    &origin_city,
-                    &destination_city,
-                    &cargo_type,
-                    &job_type,
-                ))
-            },
-        )
-        .map_err(|e| e.to_string())?;
-
-    for row in rows {
-        signatures.insert(row.map_err(|e| e.to_string())?);
-    }
-
+    // D6: no save_reference = NULL fallback retry. The old fallback leaked
+    // open-job signatures from other saves into this save whenever the exact
+    // context had no open jobs, suppressing generation here.
     Ok(signatures)
 }
 
@@ -1744,20 +1710,10 @@ fn load_dispatcher_job_by_id(
         .optional()
         .map_err(|e| e.to_string())?;
 
-    if exact.is_some() || save_context.save_reference.is_none() {
-        return Ok(exact);
-    }
-
-    stmt.query_row(
-        params![
-            job_id,
-            save_context.profile_reference.as_deref(),
-            Option::<&str>::None
-        ],
-        map_dispatcher_job_row,
-    )
-    .optional()
-    .map_err(|e| e.to_string())
+    // D6: no save_reference = NULL fallback retry (see
+    // count_dispatcher_jobs_by_status). Callers that genuinely need an
+    // unscoped lookup use load_dispatcher_job_by_id_any.
+    Ok(exact)
 }
 
 fn load_dispatcher_job_by_id_any(
@@ -1784,56 +1740,43 @@ fn list_dispatcher_jobs_by_status(
     limit: usize,
     save_context: &DispatcherSaveContext,
 ) -> Result<Vec<DispatcherJobRow>, String> {
-    if save_context.profile_reference.is_none() {
+    if save_context.profile_reference.is_none() || statuses.is_empty() {
         return Ok(Vec::new());
     }
 
-    let in_clause = statuses
-        .iter()
-        .map(|status| format!("'{}'", status))
-        .collect::<Vec<_>>()
-        .join(", ");
+    // D9: the status list is bound as parameters, never interpolated into
+    // the SQL text.
+    let placeholders = vec!["?"; statuses.len()].join(", ");
     let sql = format!(
         "
         SELECT *
         FROM dispatcher_jobs
-        WHERE status IN ({in_clause})
-          AND (?1 IS NULL OR profile_reference = ?1)
-          AND (?2 IS NULL OR save_reference = ?2)
+        WHERE status IN ({placeholders})
+          AND (? IS NULL OR profile_reference = ?)
+          AND (? IS NULL OR save_reference = ?)
         ORDER BY created_at_utc DESC
-        LIMIT ?3
+        LIMIT ?
         "
     );
+    let mut values: Vec<Value> = statuses
+        .iter()
+        .map(|status| Value::Text(status.to_string()))
+        .collect();
+    let profile = text_or_null(save_context.profile_reference.as_deref());
+    let save = text_or_null(save_context.save_reference.as_deref());
+    values.push(profile.clone());
+    values.push(profile);
+    values.push(save.clone());
+    values.push(save);
+    values.push(Value::Integer(limit as i64));
+
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map(
-            params![
-                save_context.profile_reference.as_deref(),
-                save_context.save_reference.as_deref(),
-                limit as i64
-            ],
-            map_dispatcher_job_row,
-        )
-        .map_err(|e| e.to_string())?;
-    let exact_rows = rows
-        .collect::<Result<Vec<_>, _>>()
+        .query_map(params_from_iter(values), map_dispatcher_job_row)
         .map_err(|e| e.to_string())?;
 
-    if !exact_rows.is_empty() || save_context.save_reference.is_none() {
-        return Ok(exact_rows);
-    }
-
-    let rows = stmt
-        .query_map(
-            params![
-                save_context.profile_reference.as_deref(),
-                Option::<&str>::None,
-                limit as i64
-            ],
-            map_dispatcher_job_row,
-        )
-        .map_err(|e| e.to_string())?;
-
+    // D6: no save_reference = NULL fallback retry (see
+    // count_dispatcher_jobs_by_status).
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())
 }

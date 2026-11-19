@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 
 use crate::features::backup::service as backup_service;
 use crate::features::vehicles::resolve_active_save_from_snapshot;
-use crate::shared::decrypt::decrypt_cached_with_cache;
+use crate::shared::decrypt::{decrypt_cached_with_cache, decrypt_from_disk};
 use crate::shared::paths::game_sii_from_save;
 use crate::shared::user_log;
 use crate::state::{AppProfileState, DecryptCache, ProfileCache};
@@ -58,7 +58,7 @@ pub fn list_owned_trailers_for_switch_from_content(
 
     TrailerSwitchList {
         save_path: save_path.display().to_string(),
-        file_hash: sha256_hex(content.as_bytes()),
+        file_hash: disk_save_hash(save_path, content),
         active_trailer_id: parsed.active_trailer_id.clone(),
         trailers: parsed.trailers,
         diagnostics: parsed.diagnostics,
@@ -72,10 +72,19 @@ pub fn initialize_trailer_change_session_from_content(
     content: &str,
     session_cache: &TrailerChangeSessionCache,
 ) -> Result<TrailerChangeSession, String> {
-    let file_hash = sha256_hex(content.as_bytes());
-    if let Some(entry) = session_cache.get(profile_id, save_path, &file_hash) {
-        crate::dev_log!("[trailer_change] current trailer cache hit");
-        return Ok(session_from_cache_entry(save_path, file_hash, entry));
+    let file_hash = disk_save_hash(save_path, content);
+    // 0.4: the cache is keyed by the disk hash, so it is only
+    // trustworthy when the working copy matches disk. With staged edits
+    // pending, the cached session may describe different content, so
+    // bypass the cache and recompute — and do not store the
+    // staged-state session under the disk hash, or a later Discard
+    // would serve it as current.
+    let cache_usable = sha256_hex(content.as_bytes()) == file_hash;
+    if cache_usable {
+        if let Some(entry) = session_cache.get(profile_id, save_path, &file_hash) {
+            crate::dev_log!("[trailer_change] current trailer cache hit");
+            return Ok(session_from_cache_entry(save_path, file_hash, entry));
+        }
     }
 
     let list = list_owned_trailers_for_switch_from_content(save_path, content);
@@ -96,11 +105,13 @@ pub fn initialize_trailer_change_session_from_content(
         warnings: list.warnings,
     };
 
-    session_cache.store(CurrentTrailerCacheEntry::from_session(
-        profile_id.to_string(),
-        save_path.to_path_buf(),
-        &session,
-    ));
+    if cache_usable {
+        session_cache.store(CurrentTrailerCacheEntry::from_session(
+            profile_id.to_string(),
+            save_path.to_path_buf(),
+            &session,
+        ));
+    }
     Ok(session)
 }
 
@@ -111,7 +122,7 @@ pub fn preview_active_trailer_switch_from_content(
     expected_file_hash: &str,
 ) -> TrailerChangePreview {
     let parsed = parse_trailer_save(content);
-    let actual_hash = sha256_hex(content.as_bytes());
+    let actual_hash = disk_save_hash(save_path, content);
     let current_pointer = resolve_current_trailer_pointer(&parsed).ok();
     let current_trailer = current_pointer
         .as_ref()
@@ -189,6 +200,16 @@ pub fn preview_active_trailer_switch_from_content(
         can_apply = false;
     }
 
+    // SW4: never silently rewire an external/online job to another trailer.
+    if let Some(pointer) = current_pointer.as_ref() {
+        if let Some(player_id) = parsed.player_id.as_deref() {
+            if unsupported_player_job(content, player_id, &pointer.trailer_id) {
+                warnings.push("active_external_job".to_string());
+                can_apply = false;
+            }
+        }
+    }
+
     let _ = save_path;
     warnings.sort();
     warnings.dedup();
@@ -230,7 +251,7 @@ pub fn apply_active_trailer_switch_transaction(
     let game_path = resolve_game_sii_path(save_path_arg, profile_state)?;
     decrypt_cache.invalidate_path(&game_path);
     let content = decrypt_cached_with_cache(&game_path, decrypt_cache)?;
-    let actual_hash = sha256_hex(content.as_bytes());
+    let actual_hash = disk_save_hash(&game_path, &content);
     if actual_hash != expected_file_hash {
         return Err("save_changed_since_preview".to_string());
     }
@@ -304,7 +325,7 @@ pub fn apply_active_trailer_switch_transaction(
         trailer_change_cache,
     )?;
     rollback.cleanup()?;
-    let file_hash_after = sha256_hex(refreshed_content.as_bytes());
+    let file_hash_after = disk_save_hash(&game_path, &refreshed_content);
     write_trailer_change_log(
         "info",
         vec![
@@ -356,6 +377,12 @@ pub fn apply_switch_to_content(
     let switch_plan =
         resolve_trailer_switch_write_plan(parsed, current_pointer, target_trailer_id)?;
     let previous_trailer_id = current_pointer.trailer_id.clone();
+    // SW4: never silently rewire an external/online job to another trailer.
+    if let Some(player_id) = parsed.player_id.as_deref() {
+        if unsupported_player_job(content, player_id, &previous_trailer_id) {
+            return Err("active_external_job".to_string());
+        }
+    }
     let mut updated = content.to_string();
 
     if let Some(current_slot) = switch_plan.current_slot.as_ref() {
@@ -640,6 +667,32 @@ fn player_job_company_trailer(content: &str, job_id: &str) -> Option<String> {
     extract_field_value(&job_block.raw_block, "company_trailer")
 }
 
+/// SW4: an external/online job whose company trailer is the current
+/// trailer must not be silently rewired to another trailer. (Mirrors
+/// the truck-side `unsupported_player_job` check.)
+fn unsupported_player_job(content: &str, player_id: &str, previous_trailer_id: &str) -> bool {
+    let Some(current_job_id) = player_current_job(content, player_id) else {
+        return false;
+    };
+    let parsed = parse_trailer_save(content);
+    let Some(job_block) = find_unit_block_by_id(&parsed.unit_blocks, &current_job_id, None)
+    else {
+        return false;
+    };
+    let job_references_previous = player_job_company_trailer(content, &current_job_id)
+        .map(|trailer| normalize_sii_unit_id(&trailer) == normalize_sii_unit_id(previous_trailer_id))
+        .unwrap_or(false);
+    if !job_references_previous {
+        return false;
+    }
+
+    job_block
+        .raw_block
+        .lines()
+        .map(|line| line.to_ascii_lowercase())
+        .any(|line| line.contains("external") || line.contains("online"))
+}
+
 fn find_inventory_item(
     items: &[TrailerInventoryItem],
     trailer_id: &str,
@@ -701,6 +754,7 @@ fn preview_error_code(warnings: &[String]) -> String {
         "trailer_storage_unresolved",
         "write_verification_failed",
         "backup_failed",
+        "active_external_job",
     ];
     PRIORITY
         .iter()
@@ -785,4 +839,20 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
+}
+
+/// 0.4: the optimistic-lock hash must be computed from the decrypted
+/// bytes on disk, not the staged working copy, so it agrees with the
+/// coaches/garages guards (which hash `decrypt_from_disk`). Staged
+/// edits in other tabs must not trip `save_changed_since_preview`.
+/// Raw bytes are not hashed: after a top-bar Save the file becomes
+/// plaintext while the logical content is unchanged, so raw hashing
+/// would invalidate the session on every Save. Falls back to the
+/// working-copy hash when the file cannot be read from disk (e.g.
+/// synthetic test paths).
+fn disk_save_hash(save_path: &Path, content: &str) -> String {
+    match decrypt_from_disk(save_path) {
+        Ok(disk_content) => sha256_hex(disk_content.as_bytes()),
+        Err(_) => sha256_hex(content.as_bytes()),
+    }
 }

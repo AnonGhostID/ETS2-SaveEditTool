@@ -8,16 +8,16 @@ CREATE TABLE IF NOT EXISTS vtc_companies (
 );
 
 CREATE TABLE IF NOT EXISTS vtc_company_members (
-    company_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
+    company_id INTEGER NOT NULL REFERENCES vtc_companies(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     role TEXT NOT NULL,
     PRIMARY KEY (company_id, user_id)
 );
 
 CREATE TABLE IF NOT EXISTS vtc_local_context (
     id INTEGER PRIMARY KEY CHECK (id = 1),
-    active_user_id INTEGER,
-    active_company_id INTEGER,
+    active_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    active_company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
     updated_at TEXT NOT NULL
 );
 

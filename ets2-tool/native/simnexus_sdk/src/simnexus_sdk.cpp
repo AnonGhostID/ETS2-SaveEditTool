@@ -42,6 +42,7 @@ using simnexus::TelemetryData;
 scs_log_t g_game_log = nullptr;
 HMODULE g_module = nullptr;
 HANDLE g_mapping = nullptr;
+HANDLE g_init_mutex = nullptr;
 HANDLE g_heartbeat_stop = nullptr;
 HANDLE g_heartbeat_thread = nullptr;
 TelemetryBridgeHeader* g_header = nullptr;
@@ -57,6 +58,32 @@ class StateLock final {
   ~StateLock() { ReleaseSRWLockExclusive(&g_state_lock); }
   StateLock(const StateLock&) = delete;
   StateLock& operator=(const StateLock&) = delete;
+};
+
+// NT1: the shared-memory mapping is created by whichever game process loads
+// first, but init/shutdown used to be guarded only by in-process SRWLocks,
+// so two game processes could race (one memset'ing the mapping while the
+// other publishes). This named mutex serializes init/shutdown across
+// processes. It does NOT fix the two-games-one-mapping design: a second
+// game instance still re-zeros the mapping, just not mid-publish.
+constexpr DWORD kInitMutexTimeoutMs = 5000;
+
+class InitMutexLock final {
+ public:
+  InitMutexLock() {
+    if (g_init_mutex == nullptr) return;
+    const DWORD result = WaitForSingleObject(g_init_mutex, kInitMutexTimeoutMs);
+    acquired_ = (result == WAIT_OBJECT_0 || result == WAIT_ABANDONED);
+  }
+  ~InitMutexLock() {
+    if (acquired_) ReleaseMutex(g_init_mutex);
+  }
+  bool acquired() const { return acquired_; }
+  InitMutexLock(const InitMutexLock&) = delete;
+  InitMutexLock& operator=(const InitMutexLock&) = delete;
+
+ private:
+  bool acquired_ = false;
 };
 
 std::uint64_t unix_timestamp_ms() {
@@ -238,6 +265,21 @@ bool initialize_shared_memory(
     const scs_u32_t sdk_version, const scs_sdk_init_params_v100_t& common) {
   const DWORD mapping_size =
       static_cast<DWORD>(sizeof(TelemetryBridgeHeader) + sizeof(TelemetryData));
+  // NT1: create (or open) the named init mutex first, then hold it across
+  // the whole init so no other game process can interleave its own init or
+  // shutdown with ours. The handle stays open for shutdown to use.
+  g_init_mutex = CreateMutexW(nullptr, FALSE, simnexus::kSharedMemoryMutexName);
+  if (g_init_mutex == nullptr) {
+    log_windows_error("CreateMutexW(init)");
+    return false;
+  }
+  InitMutexLock init_lock;
+  if (!init_lock.acquired()) {
+    log_error("[SimNexus] timed out waiting for the telemetry init mutex");
+    CloseHandle(g_init_mutex);
+    g_init_mutex = nullptr;
+    return false;
+  }
   SetLastError(ERROR_SUCCESS);
   g_mapping = CreateFileMappingW(
       INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, mapping_size, simnexus::kSharedMemoryName);
@@ -309,11 +351,24 @@ bool initialize_shared_memory(
 }
 
 void shutdown_shared_memory() {
-  if (g_header != nullptr) UnmapViewOfFile(g_header);
-  g_header = nullptr;
-  g_payload = nullptr;
-  if (g_mapping != nullptr) CloseHandle(g_mapping);
-  g_mapping = nullptr;
+  // NT1: serialize teardown with any other process's init/shutdown. If the
+  // mutex cannot be acquired, proceed anyway: a stuck peer must not block
+  // this process from unloading.
+  {
+    InitMutexLock init_lock;
+    if (g_init_mutex != nullptr && !init_lock.acquired()) {
+      log_warning("[SimNexus] could not acquire the telemetry init mutex during shutdown");
+    }
+    if (g_header != nullptr) UnmapViewOfFile(g_header);
+    g_header = nullptr;
+    g_payload = nullptr;
+    if (g_mapping != nullptr) CloseHandle(g_mapping);
+    g_mapping = nullptr;
+  }
+  if (g_init_mutex != nullptr) {
+    CloseHandle(g_init_mutex);
+    g_init_mutex = nullptr;
+  }
 }
 
 SCSAPI_VOID telemetry_store_float(

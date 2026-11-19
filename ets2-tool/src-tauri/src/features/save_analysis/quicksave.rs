@@ -478,9 +478,19 @@ fn build_quicksave_game_info_from_path(
         .ok_or_else(|| "Player block not found".to_string())?;
     let player_my_truck = extract_reference_value(&player_block, "my_truck");
     let player_my_trailer = extract_reference_value(&player_block, "my_trailer");
-    let player_xp = extract_integer_field(&content, "experience_points");
+    // R4: XP and skills live in the economy unit. Searching the whole
+    // file for the first match works only while the economy unit comes
+    // before the AI drivers; scope the reads to the economy block so a
+    // different unit order (or a mod) cannot misread a driver's fields.
+    // Falls back to the whole content when no economy unit exists.
+    let economy_block = extract_first_block(&content, "economy")
+        .ok()
+        .flatten()
+        .map(|(_, body)| body);
+    let economy_scope = economy_block.as_deref().unwrap_or(&content);
+    let player_xp = extract_integer_field(economy_scope, "experience_points");
     let bank_id = extract_first_block(&content, "bank")?.map(|(id, _)| id);
-    let skill = |name: &str| -> Option<i64> { extract_integer_field(&content, name) };
+    let skill = |name: &str| -> Option<i64> { extract_integer_field(economy_scope, name) };
     let truck_summary = parse_current_truck_summary_from_content(&content)?;
 
     let result = GameDataQuicksave {

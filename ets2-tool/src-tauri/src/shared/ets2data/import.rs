@@ -635,6 +635,7 @@ mod tests {
     #[test]
     fn sqlite_import_smoke() {
         let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
         ensure_tables(&conn).unwrap();
 
         let mut country = CountryRecord {

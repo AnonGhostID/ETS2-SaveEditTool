@@ -72,7 +72,7 @@ fn render_clone_and_rename(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                                 app.clone_replace_text,
                             ) {
                                 Ok(msg) => {
-                                    app.refresh_profiles_and_saves();
+                                    app.refresh_profiles_guarded();
                                     app.set_status(msg, false);
                                 }
                                 Err(e) => app.set_status(e, true),
@@ -92,7 +92,7 @@ fn render_clone_and_rename(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                         app.profile_state(),
                     ) {
                         Ok(msg) => {
-                            app.refresh_profiles_and_saves();
+                            app.refresh_profiles_guarded();
                             app.set_status(msg, false);
                         }
                         Err(e) => app.set_status(e, true),
@@ -230,7 +230,7 @@ fn render_profile_sharing(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                         app.profile_state(),
                     ) {
                         Ok(res) => {
-                            app.refresh_profiles_and_saves();
+                            app.refresh_profiles_guarded();
                             app.set_status(
                                 format!(
                                     "Imported profile `{}` ({} files).",

@@ -7,6 +7,7 @@ use std::time::SystemTime;
 #[cfg(target_os = "windows")]
 use regex::Regex;
 use sha2::{Digest, Sha256};
+use crate::features::telemetry::simnexus_protocol::{BRIDGE_MAGIC, SHARED_MEMORY_NAME};
 use crate::tauri::{AppHandle, Manager, Runtime};
 #[cfg(target_os = "windows")]
 use winreg::{RegKey, enums::*};
@@ -74,7 +75,49 @@ pub fn plugin_target_path(install: &GameInstall) -> PathBuf {
 
 pub fn plugin_file_installed(game: ScsGame) -> Result<bool, String> {
     let install = find_game_installation(game)?;
-    Ok(plugin_target_path(&install).is_file())
+    let target = plugin_target_path(&install);
+    if !target.is_file() {
+        return Ok(false);
+    }
+    // NT4/NT5: a file with the right name is not an installed plugin if it
+    // does not speak the protocol; report it as not installed so the
+    // installer replaces it.
+    match fs::read(&target) {
+        Ok(bytes) => Ok(verify_plugin_protocol(&bytes).is_ok()),
+        Err(error) => {
+            crate::dev_log!(
+                "[career] could not read installed plugin DLL {}: {}",
+                target.display(),
+                error
+            );
+            Ok(false)
+        }
+    }
+}
+
+fn bytes_contain(haystack: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty() && haystack.windows(needle.len()).any(|window| window == needle)
+}
+
+/// NT5: verify the DLL speaks the telemetry protocol this build reads (v3
+/// shared-memory mapping name + payload magic), rather than trusting any
+/// file with the right name. Deliberately NOT a file-version check: a
+/// future DLL 3.1.0 speaking protocol 3 must still pass.
+fn verify_plugin_protocol(bytes: &[u8]) -> Result<(), String> {
+    let mapping_name_wide: Vec<u8> = SHARED_MEMORY_NAME
+        .encode_utf16()
+        .flat_map(|unit| unit.to_le_bytes())
+        .collect();
+    if !bytes_contain(bytes, &mapping_name_wide) {
+        return Err(format!(
+            "Plugin DLL does not contain the v3 shared-memory mapping name ({})",
+            SHARED_MEMORY_NAME
+        ));
+    }
+    if !bytes_contain(bytes, &BRIDGE_MAGIC) {
+        return Err("Plugin DLL does not contain the v3 telemetry payload magic".to_string());
+    }
+    Ok(())
 }
 
 fn files_match_by_content(left: &Path, right: &Path) -> Result<bool, String> {
@@ -124,6 +167,12 @@ pub fn install_plugin_files<R: Runtime>(
     let source = resolve_plugin_resource(app)?;
     let target = plugin_target_path(&install);
     let source_hash = file_sha256(&source)?;
+
+    // NT5: never install a bundled DLL that does not speak the protocol
+    // this build reads.
+    let source_bytes =
+        fs::read(&source).map_err(|e| format!("Failed to read {}: {e}", source.display()))?;
+    verify_plugin_protocol(&source_bytes)?;
 
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).map_err(|e| {

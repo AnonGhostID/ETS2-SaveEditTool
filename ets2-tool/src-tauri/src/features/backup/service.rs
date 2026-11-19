@@ -13,6 +13,7 @@ use crate::features::logging::service as logging_service;
 use crate::shared::current_profile::snapshot_resolved_save_context;
 use crate::shared::decrypt::decode_text_bytes;
 use crate::shared::paths::{ets2_base_config_path, game_sii_from_save, info_sii_from_save};
+use crate::shared::save_session;
 use crate::state::AppProfileState;
 
 use super::models::{
@@ -100,8 +101,10 @@ pub fn create_backup_for_targets_with_type(
 
     let mut files = Vec::new();
     for live_path in normalized_targets {
-        let bytes = fs::read(&live_path)
-            .map_err(|error| format!("Backup could not read {}: {}", live_path.display(), error))?;
+        let bytes = fs::read(&live_path).map_err(|error| {
+            remove_partial_backup_dir(&storage_dir);
+            format!("Backup could not read {}: {}", live_path.display(), error)
+        })?;
         let relative_path = relative_label_for_target(
             &live_path,
             resolved
@@ -114,9 +117,13 @@ pub fn create_backup_for_targets_with_type(
         let stored_path = PathBuf::from("files").join(&relative_path);
         let absolute_stored_path = storage_dir.join(&stored_path);
         if let Some(parent) = absolute_stored_path.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            fs::create_dir_all(parent).map_err(|error| {
+                remove_partial_backup_dir(&storage_dir);
+                error.to_string()
+            })?;
         }
         fs::write(&absolute_stored_path, &bytes).map_err(|error| {
+            remove_partial_backup_dir(&storage_dir);
             format!(
                 "Backup could not write {}: {}",
                 absolute_stored_path.display(),
@@ -150,9 +157,12 @@ pub fn create_backup_for_targets_with_type(
         files: files.clone(),
     };
 
-    let metadata_json =
-        serde_json::to_string_pretty(&metadata).map_err(|error| error.to_string())?;
+    let metadata_json = serde_json::to_string_pretty(&metadata).map_err(|error| {
+        remove_partial_backup_dir(&storage_dir);
+        error.to_string()
+    })?;
     fs::write(storage_dir.join(BACKUP_METADATA_FILE), metadata_json).map_err(|error| {
+        remove_partial_backup_dir(&storage_dir);
         format!(
             "Backup metadata could not be written to {}: {}",
             storage_dir.display(),
@@ -160,6 +170,10 @@ pub fn create_backup_for_targets_with_type(
         )
     })?;
 
+    let files_json = serde_json::to_string(&files).map_err(|error| {
+        remove_partial_backup_dir(&storage_dir);
+        error.to_string()
+    })?;
     let conn = open_runtime_connection()?;
     conn.execute(
         r#"
@@ -180,11 +194,16 @@ pub fn create_backup_for_targets_with_type(
             metadata.backup_type,
             metadata.created_at_utc,
             storage_dir.display().to_string(),
-            serde_json::to_string(&files).map_err(|error| error.to_string())?,
+            files_json,
             files.len() as i64
         ],
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| {
+        // No database row without files and no files without a row: a
+        // failed insert must not leave an orphaned backup directory (DB4).
+        remove_partial_backup_dir(&storage_dir);
+        error.to_string()
+    })?;
 
     let mut log_context = context;
     log_context
@@ -269,6 +288,14 @@ pub fn list_backups_for_save_session(
 }
 
 pub fn build_restore_preview(backup_id: &str) -> Result<BackupRestorePreviewDto, String> {
+    build_restore_preview_for_context(None, None, backup_id)
+}
+
+pub fn build_restore_preview_for_context(
+    profile_reference: Option<&str>,
+    save_reference: Option<&str>,
+    backup_id: &str,
+) -> Result<BackupRestorePreviewDto, String> {
     let loaded = load_backup(backup_id)?;
     let metadata = loaded.metadata;
     let mut files = Vec::new();
@@ -282,7 +309,18 @@ pub fn build_restore_preview(backup_id: &str) -> Result<BackupRestorePreviewDto,
                     file.relative_path, error
                 )
             })?;
-        let current_bytes = fs::read(&file.live_path).ok();
+        // Compare against the path the restore would actually write to,
+        // not the possibly stale recorded path (P1).
+        let current_path = relocate_restore_target(file, profile_reference, save_reference);
+        if current_path != PathBuf::from(&file.live_path) {
+            notes.push(format!(
+                "{} was moved since this backup was taken; it would be restored to {} instead of {}.",
+                file.relative_path,
+                current_path.display(),
+                file.live_path
+            ));
+        }
+        let current_bytes = fs::read(&current_path).ok();
         let checksum_before = current_bytes
             .as_deref()
             .map(sha256_hex)
@@ -397,26 +435,69 @@ pub fn restore_backup(
 
     let loaded = load_backup(backup_id)?;
     let metadata = loaded.metadata;
-    let live_targets = metadata
+    let resolved = snapshot_resolved_save_context(profile_state).ok();
+    let profile_reference = resolved
+        .as_ref()
+        .and_then(|item| item.context.profile_reference.as_deref());
+    let save_reference = resolved
+        .as_ref()
+        .and_then(|item| item.context.save_reference.as_deref());
+    // Relocate before anything else: the safety backup must cover the
+    // files that will actually be overwritten, not stale recorded paths.
+    let live_targets: Vec<PathBuf> = metadata
         .files
         .iter()
-        .map(|file| PathBuf::from(&file.live_path))
-        .collect::<Vec<_>>();
-    let safety_backup = create_backup_for_targets(
-        profile_state,
-        &format!("before restore {}", metadata.action_reason),
-        &live_targets,
-    )
-    .ok();
+        .map(|file| relocate_restore_target(file, profile_reference, save_reference))
+        .collect();
+    // 14.1: restoring over staged edits is a no-op that undoes itself —
+    // the overlay keeps masking the restored bytes, and the next top-bar
+    // Save flushes the old staged content over the restore. Refuse while
+    // any restore target has pending edits; the user Saves or Discards
+    // first, so no staged work is silently lost.
+    let dirty_targets: Vec<String> = save_session::dirty_paths()
+        .into_iter()
+        .filter(|path| live_targets.iter().any(|target| target == path))
+        .map(|path| path.display().to_string())
+        .collect();
+    if !dirty_targets.is_empty() {
+        return Err(format!(
+            "Restore blocked: unsaved changes are pending for {}. Save or discard them first, then restore again.",
+            dirty_targets.join(", ")
+        ));
+    }
+    // When no target exists yet the restore only recreates missing files
+    // and there is nothing to protect; otherwise a failed safety backup
+    // aborts the restore instead of leaving the user without a rollback.
+    let existing_targets: Vec<PathBuf> = live_targets
+        .iter()
+        .filter(|path| path.exists())
+        .cloned()
+        .collect();
+    let safety_backup = if existing_targets.is_empty() {
+        None
+    } else {
+        Some(
+            create_backup_for_targets(
+                profile_state,
+                &format!("before restore {}", metadata.action_reason),
+                &existing_targets,
+            )
+            .map_err(|error| {
+                format!(
+                    "Restore aborted: the safety backup failed ({}). Nothing was restored.",
+                    error
+                )
+            })?,
+        )
+    };
 
     let mut touched_paths = Vec::new();
-    for file in &metadata.files {
+    for (file, target) in metadata.files.iter().zip(live_targets.iter()) {
         let source = loaded.storage_dir.join(&file.stored_path);
-        let target = PathBuf::from(&file.live_path);
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
-        fs::copy(&source, &target).map_err(|error| {
+        fs::copy(&source, target).map_err(|error| {
             format!(
                 "Restore could not copy {} to {}: {}",
                 source.display(),
@@ -424,7 +505,7 @@ pub fn restore_backup(
                 error
             )
         })?;
-        touched_paths.push(target);
+        touched_paths.push(target.clone());
     }
 
     let mut context = logging_service::resolve_active_context(profile_state);
@@ -531,6 +612,47 @@ fn load_backup(backup_id: &str) -> Result<LoadedBackup, String> {
         },
         storage_dir: storage_dir_path,
     })
+}
+
+/// Best-effort removal of a partially written backup directory, so a failed
+/// backup create never leaves orphaned files without a database row (DB4).
+/// The directory name contains a fresh UUID, so only this backup is removed.
+fn remove_partial_backup_dir(storage_dir: &Path) {
+    let _ = fs::remove_dir_all(storage_dir);
+}
+
+/// Resolve the live path a backed-up file should be restored to. When the
+/// recorded absolute path still exists it is used unchanged; otherwise the
+/// file is relocated into the currently active profile/save using the
+/// relative label recorded at backup time (P1: restores used to recreate
+/// files at stale absolute paths after a profile or save was moved, leaving
+/// the active save untouched).
+fn relocate_restore_target(
+    file: &BackupFileRecord,
+    profile_reference: Option<&str>,
+    save_reference: Option<&str>,
+) -> PathBuf {
+    let live_path = PathBuf::from(&file.live_path);
+    if live_path.exists() {
+        return live_path;
+    }
+
+    if let Some(name) = file.relative_path.strip_prefix("save/") {
+        if let Some(save_reference) = save_reference {
+            return Path::new(save_reference).join(name);
+        }
+    }
+    if let Some(name) = file.relative_path.strip_prefix("profile/") {
+        if let Some(profile_reference) = profile_reference {
+            return Path::new(profile_reference).join(name);
+        }
+    }
+    if file.relative_path == "global/config.cfg" {
+        if let Some(path) = ets2_base_config_path() {
+            return path;
+        }
+    }
+    live_path
 }
 
 fn relative_label_for_target(
@@ -657,6 +779,8 @@ fn extract_key_values(text: &str) -> BTreeMap<String, String> {
 fn open_runtime_connection() -> Result<Connection, String> {
     let db_path = sqlite::app_db_path();
     let conn = Connection::open(db_path).map_err(|error| error.to_string())?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|error| error.to_string())?;
     conn.busy_timeout(Duration::from_secs(5))
         .map_err(|error| error.to_string())?;
     Ok(conn)

@@ -296,6 +296,27 @@ pub fn apply_sandbox_to_active_profile_with_force(
         "[mod-profile-manager] apply old_mod_count={}",
         old_mod_count
     );
+    // Managed backup first: without it the Backups/Undo flows have no
+    // snapshot for this mutation (P2). The backup covers the pre-edit
+    // disk state, which is the correct undo point even while staging
+    // is on. A failed backup blocks the apply instead of leaving the
+    // user without a rollback.
+    let managed_backup = backup_service::create_backup_for_targets_with_type(
+        profile_state,
+        backup_service::BACKUP_TYPE_UNDO_BEFORE_EDIT,
+        &format!("before apply sandbox {}", sandbox.title),
+        &backup_service::recommended_targets(&game_sii),
+    )
+    .map_err(|error| {
+        format!(
+            "Sandbox was not applied because the safety backup failed: {}",
+            error
+        )
+    })?;
+    println!(
+        "[mod-profile-manager] apply managed_backup_id={}",
+        managed_backup.backup_id
+    );
     let (backup_path, replace_result) =
         sii_mods::overwrite_active_preset_mods(&game_sii, &workshop_mod_ids)?;
     println!(
@@ -312,7 +333,7 @@ pub fn apply_sandbox_to_active_profile_with_force(
     // staged edits while explicit-save staging is on.
     let reapplied_content = decrypt_if_needed(&game_sii)
         .map_err(|error| format!("Failed to re-read {}: {}", game_sii.display(), error));
-    let (validation, success, message) = match reapplied_content {
+    let (validation, success, mut message) = match reapplied_content {
         Ok(content) => {
             match sii_mods::validate_active_preset_mods_in_game_sii(&content, &workshop_mod_ids) {
                 Ok(validation) => {
@@ -369,6 +390,27 @@ pub fn apply_sandbox_to_active_profile_with_force(
             )
         }
     };
+    // The GUI surfaces only `message`, so skipped mods would otherwise be
+    // invisible even though the apply reports success (P6/P7).
+    if !skipped_mods.is_empty() {
+        let skipped_list = skipped_mods
+            .iter()
+            .map(|skipped| {
+                let name = skipped
+                    .title
+                    .as_deref()
+                    .filter(|title| !title.trim().is_empty())
+                    .unwrap_or(&skipped.mod_id);
+                format!("{} ({})", name, skipped.reason)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        message.push_str(&format!(
+            " Skipped {} mod(s) not applied: {}.",
+            skipped_mods.len(),
+            skipped_list
+        ));
+    }
     let removed_existing_mod_count = replace_result.removed_mod_count;
     let applied_mod_count = replace_result.written_mod_count;
 
@@ -1301,6 +1343,23 @@ pub fn activate_sandbox_mod_preset_profile_sii(
     );
     let backup_path_string = backup_path.display().to_string();
     progress_log.push("Backup erstellt".to_string());
+    // Rolls profile.sii back to the sidecar backup and reports the
+    // outcome for the failure message. Only used after the write: every
+    // failure before that point leaves the original file untouched (P3).
+    let rollback = || -> String {
+        match restore_profile_sii_backup(&backup_path, &profile_sii) {
+            Ok(()) => {
+                decrypt_cache.invalidate_path(&profile_sii);
+                profile_cache.invalidate_save_data();
+                profile_cache.invalidate_vehicle_data();
+                "The previous profile.sii was restored from backup.".to_string()
+            }
+            Err(error) => format!(
+                "Rollback failed ({}); the modified profile.sii is still on disk.",
+                error
+            ),
+        }
+    };
 
     crate::dev_log!("[SandboxPreset] decrypt profile_sii START");
     let profile_text = match decrypt_if_needed(&profile_sii) {
@@ -1402,11 +1461,17 @@ pub fn activate_sandbox_mod_preset_profile_sii(
         };
 
     if let Err(error) = sii_mods::write_text_flush_sync(&profile_sii, &updated_profile_text) {
+        // The write truncates first, so a failure can leave a partial
+        // file behind; restore the pre-write bytes.
+        let rollback_note = rollback();
         return Ok(profile_activation_failure_result(
             &preset.id,
             &preset.title,
             "save_write_failed",
-            format!("Failed to write profile.sii: {}", error),
+            format!(
+                "Failed to write profile.sii: {}. {}",
+                error, rollback_note
+            ),
             progress_log,
             mod_cache_path,
             Some(backup_path_string),
@@ -1429,13 +1494,14 @@ pub fn activate_sandbox_mod_preset_profile_sii(
     let reread_content = match decrypt_if_needed(&profile_sii) {
         Ok(content) => content,
         Err(error) => {
+            let rollback_note = rollback();
             return Ok(profile_activation_failure_result(
                 &preset.id,
                 &preset.title,
                 "save_reread_failed",
                 format!(
-                    "profile.sii was written, but could not be read again. {}",
-                    error
+                    "profile.sii was written, but could not be read again. {} {}",
+                    error, rollback_note
                 ),
                 progress_log,
                 mod_cache_path,
@@ -1453,13 +1519,14 @@ pub fn activate_sandbox_mod_preset_profile_sii(
         match sii_mods::validate_active_mods_in_profile_text(&reread_content, &expected_values) {
             Ok(verification) => verification,
             Err(error) => {
+                let rollback_note = rollback();
                 return Ok(profile_activation_failure_result(
                     &preset.id,
                     &preset.title,
                     "verification_failed",
                     format!(
-                        "profile.sii was written, but active_mods could not be verified. {}",
-                        error
+                        "profile.sii was written, but active_mods could not be verified. {} {}",
+                        error, rollback_note
                     ),
                     progress_log,
                     mod_cache_path,
@@ -1490,6 +1557,7 @@ pub fn activate_sandbox_mod_preset_profile_sii(
         && verification.order_matches
         && verification.values_match)
     {
+        let rollback_note = rollback();
         return Ok(SandboxPresetActivationResult {
             preset_id: preset.id.clone(),
             preset_name: preset.title.clone(),
@@ -1510,7 +1578,10 @@ pub fn activate_sandbox_mod_preset_profile_sii(
             mods_written,
             missing_mods: Vec::new(),
             verification,
-            message: "profile.sii was written, but active_mods verification failed.".to_string(),
+            message: format!(
+                "profile.sii was written, but active_mods verification failed. {}",
+                rollback_note
+            ),
             progress_log,
         });
     }
@@ -2402,6 +2473,21 @@ fn backup_profile_sii(path: &Path) -> Result<PathBuf, String> {
         )
     })?;
     Ok(backup_path)
+}
+
+/// Restore a profile.sii from the sidecar backup taken before a preset
+/// activation, so a failed write/verification does not leave the modified
+/// file on disk (P3).
+fn restore_profile_sii_backup(backup_path: &Path, target: &Path) -> Result<(), String> {
+    fs::copy(backup_path, target).map_err(|error| {
+        format!(
+            "Failed to restore {} from backup {}: {}",
+            target.display(),
+            backup_path.display(),
+            error
+        )
+    })?;
+    Ok(())
 }
 
 fn write_activation_operation_log(

@@ -86,10 +86,16 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             &format!("{}/{}", coaches.discovered_stops, coaches.stops.len()),
             theme::SUCCESS,
         );
+        // C8: the typed economy stat, not the job-log length (a log
+        // entry is not necessarily a completed job). "—" when the save
+        // does not store the stat.
         components::stat_tile(
             &mut cols[3],
             "Jobs Completed",
-            &coaches.total_bus_jobs.to_string(),
+            &coaches
+                .finished_job_count
+                .map(|count| count.to_string())
+                .unwrap_or_else(|| "—".to_string()),
             theme::TEXT,
         );
     });
@@ -101,16 +107,23 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             &format!("€{}", coaches.total_bus_reward),
             theme::SUCCESS,
         );
+        // C8: typed economy stats (see above), not job-log totals.
         components::stat_tile(
             &mut cols[1],
             "Passengers Carried",
-            &coaches.total_bus_passengers.to_string(),
+            &coaches
+                .total_passengers_count
+                .map(|count| count.to_string())
+                .unwrap_or_else(|| "—".to_string()),
             theme::TEXT,
         );
         components::stat_tile(
             &mut cols[2],
             "Distance Driven",
-            &format!("{:.0} km", coaches.total_bus_distance),
+            &coaches
+                .total_distance_km
+                .map(|km| format!("{km:.0} km"))
+                .unwrap_or_else(|| "—".to_string()),
             theme::TEXT,
         );
     });
@@ -124,11 +137,14 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     ui.label("(max level)");
                 }
             });
+            // C10: the level table tops out at 256 — never display a
+            // "to level 257" target.
+            let next_level = (progress.level + 1).min(256);
             ui.add(egui::ProgressBar::new(progress.progress_percent / 100.0).text(format!(
                 "{} / {} XP to level {}",
                 progress.xp_into_level,
                 progress.xp_into_level + progress.xp_needed_for_next_level,
-                progress.level + 1
+                next_level
             )));
         });
         ui.add_space(8.0);
@@ -263,7 +279,7 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
         if present.is_empty() {
             ui.label(
                 "This save does not store per-career bus statistics yet \
-                (distance, job counts, passengers, play time). Totals above come from the job log.",
+                (distance, job counts, passengers, play time), so the totals above show —.",
             );
         } else {
             egui::Grid::new("coaches_statistics")
@@ -369,8 +385,12 @@ fn apply_bus_xp(app: &mut Ets2NativeApp, xp: i64, save_hash: &str) {
         app.decrypt_cache(),
     ) {
         Ok(()) => {
-            app.set_status(format!("Bus XP saved: {xp}"), false);
+            app.set_status(format!("Staged bus XP {xp} (press Save to write)."), false);
             reload(app);
+        }
+        // C4: an unchanged value is not a failure.
+        Err(error) if crate::gui::is_no_change_error(&error) => {
+            app.set_status("Bus XP is already at that value.", false);
         }
         Err(error) => app.set_status(format!("Bus XP edit: {error}"), true),
     }

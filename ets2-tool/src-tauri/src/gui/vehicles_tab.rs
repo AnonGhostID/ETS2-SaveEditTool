@@ -159,14 +159,30 @@ fn render_player_editor(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                 ui.add(egui::Slider::new(&mut app.truck_wear_slider, 0.0..=1.0));
                 for comp in ["engine", "transmission", "cabin", "chassis", "wheels"] {
                     if ui.small_button(comp).clicked() {
-                        let _ = async_runtime::block_on(set_player_truck_wear(
+                        // SW6: surface success/failure instead of
+                        // discarding the result and reloading blindly.
+                        match async_runtime::block_on(set_player_truck_wear(
                             app.profile_state(),
                             app.decrypt_cache(),
                             app.profile_cache(),
                             comp.to_string(),
                             app.truck_wear_slider,
-                        ));
-                        app.reload_active_save_data();
+                        )) {
+                            Ok(()) => {
+                                app.reload_active_save_data();
+                                app.set_status(
+                                    format!(
+                                        "Set {comp} wear to {:.0}%.",
+                                        app.truck_wear_slider * 100.0
+                                    ),
+                                    false,
+                                );
+                            }
+                            Err(e) => app.set_status(
+                                format!("Failed to set {comp} wear: {e}"),
+                                true,
+                            ),
+                        }
                     }
                 }
             });

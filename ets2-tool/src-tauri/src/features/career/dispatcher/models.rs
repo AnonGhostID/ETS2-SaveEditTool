@@ -7,6 +7,12 @@ pub(super) const DISPATCHER_DEFAULT_MAX_OPEN_JOBS: i64 = 24;
 pub(super) const DISPATCHER_MAX_GENERATION_BATCH: usize = 4;
 pub(super) const DISPATCHER_OPEN_JOB_STATUSES: &[&str] =
     &["open", "assigned_to_save", "prepared", "injected", "failed"];
+/// D13: the statuses a market job must have to be actionable from the GUI's
+/// "Available Market Jobs" list. Accept requires `open`; rows in any other
+/// status are unactionable there. The wider DISPATCHER_OPEN_JOB_STATUSES
+/// stays for generation counting, where assigned/prepared/injected jobs
+/// still occupy market slots.
+pub(super) const DISPATCHER_MARKET_JOB_STATUSES: &[&str] = &["open"];
 pub(super) const DISPATCHER_ACTIVE_JOB_STATUSES: &[&str] = &[
     "assigned_to_save",
     "prepared",

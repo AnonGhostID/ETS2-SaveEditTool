@@ -870,7 +870,27 @@ fn change_profile_name_in_sii(content: &str, new_name: &str) -> Result<String, S
 
     Ok(pattern
         .replace(content, |caps: &regex::Captures| {
-            format!("{}profile_name: \"{}\"", &caps["indent"], new_name)
+            format!(
+                "{}profile_name: \"{}\"",
+                &caps["indent"],
+                escape_sii_string(new_name)
+            )
         })
         .to_string())
+}
+
+/// P9: escape a user-supplied value before interpolating it into a
+/// quoted SII string, so `"`, `\` or a newline in the name cannot break
+/// out of the value and corrupt the file.
+fn escape_sii_string(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\r' | '\n' => escaped.push(' '),
+            other => escaped.push(other),
+        }
+    }
+    escaped
 }

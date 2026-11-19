@@ -24,7 +24,7 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
             email TEXT NOT NULL,
             password_hash TEXT NOT NULL,
             role TEXT NOT NULL DEFAULT 'user',
-            company_id INTEGER,
+            company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             last_login_at TEXT,
@@ -38,8 +38,9 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
 
         CREATE TABLE IF NOT EXISTS sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             token TEXT,
+            token_hash TEXT,
             created_at TEXT NOT NULL,
             expires_at TEXT,
             last_used_at TEXT,
@@ -48,10 +49,11 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
 
         CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
         CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
+        CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
 
         CREATE TABLE IF NOT EXISTS recovery_codes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             code_hash TEXT NOT NULL,
             created_at TEXT NOT NULL,
             used_at TEXT
@@ -61,7 +63,7 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
 
         CREATE TABLE IF NOT EXISTS login_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
+            user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
             at_utc TEXT NOT NULL,
             year_month TEXT NOT NULL
         );
@@ -91,8 +93,21 @@ fn ensure_user_columns(conn: &Connection) -> Result<(), String> {
 }
 
 fn ensure_session_columns(conn: &Connection) -> Result<(), String> {
-    let required = [("revoked_at", "TEXT")];
+    let required = [("revoked_at", "TEXT"), ("token_hash", "TEXT")];
     ensure_columns(conn, "sessions", &required)?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash)",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+    // Sessions created before token hashing stored the raw bearer token and
+    // can no longer be restored (the on-disk session file format changed);
+    // drop the plaintext values instead of leaving them in the DB (AS3).
+    conn.execute(
+        "UPDATE sessions SET token = NULL WHERE token_hash IS NULL AND token IS NOT NULL",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 

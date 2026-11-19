@@ -186,6 +186,12 @@ fn enrich_city_data(
     sqlite_path: &Path,
 ) -> Result<(), String> {
     let connection = Connection::open(sqlite_path).map_err(|error| error.to_string())?;
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|error| error.to_string())?;
+    connection
+        .busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|error| error.to_string())?;
     let records = import::list_cities(&connection, Some(CityQueryFilter::default()))?;
     let mut city_by_token: HashMap<String, Option<CityDetails>> = HashMap::new();
     for record in records {
@@ -818,15 +824,23 @@ pub fn relinquish_empty_garages(
 
     let parsed = parse_garages_from_sii(&content)?;
     let mut garage_ids = Vec::new();
+    // G4/G5: garages the UI's loose "empty" rule (no drivers, no trucks)
+    // counts but the backend refuses to sell — report them so the
+    // mismatch is visible instead of silent.
+    let mut skipped_garage_ids = Vec::new();
     for garage in parsed.garages.iter().filter(|garage| {
         garage.ownership == GarageOwnership::Owned
-            && !garage.is_headquarters
-            && garage.occupied_slots == 0
             && garage.assigned_truck_count == 0
             && garage.assigned_driver_count == 0
-            && garage.assigned_trailer_count == 0
-            && garage.trailer_slot_count == 0
     }) {
+        if garage.is_headquarters
+            || garage.occupied_slots != 0
+            || garage.assigned_trailer_count != 0
+            || garage.trailer_slot_count != 0
+        {
+            skipped_garage_ids.push(garage.garage_id.clone());
+            continue;
+        }
         validate_mutation_target(
             garage,
             &GarageOperation::Relinquish,
@@ -841,6 +855,7 @@ pub fn relinquish_empty_garages(
         validate_no_external_garage_references(&content, &garage.garage_id)?;
         garage_ids.push(garage.garage_id.clone());
     }
+    skipped_garage_ids.sort();
 
     if garage_ids.is_empty() {
         ensure_active_context(profile_state, selection, selected_game)?;
@@ -853,6 +868,7 @@ pub fn relinquish_empty_garages(
             operation: GarageBulkOperation::RelinquishEmpty,
             relinquished_garage_ids: garage_ids,
             relinquished_count: 0,
+            skipped_garage_ids,
             backup_id: None,
             backup_created: false,
             verified: true,
@@ -996,6 +1012,7 @@ pub fn relinquish_empty_garages(
         operation: GarageBulkOperation::RelinquishEmpty,
         relinquished_count: garage_ids.len(),
         relinquished_garage_ids: garage_ids,
+        skipped_garage_ids,
         backup_id: backup.as_ref().map(|backup| backup.backup_id.clone()),
         backup_created: backup.is_some(),
         verified: true,

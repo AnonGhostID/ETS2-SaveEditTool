@@ -9,7 +9,7 @@ use crate::shared::paths::{
 };
 use crate::shared::trace::TraceScope;
 use crate::state::{AppProfileState, DecryptCache, ProfileCache};
-use crate::xp::command::{calculate_level, total_xp_to_reach_level, xp_required_for_level};
+use crate::xp::command::{calculate_level, total_xp_to_reach_level};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -27,10 +27,26 @@ pub fn read_project_coaches(
     let mut snapshot = super::coaches::read_snapshot(&content)?;
     // The save hash guards against EXTERNAL modification of the disk file,
     // so it is computed from the disk content, not the staged working copy:
-    // staged edits from other screens must not trip it.
-    let disk_content = decrypt_from_disk(&path).unwrap_or_else(|_| content.clone());
+    // staged edits from other screens must not trip it. A disk read
+    // failure is an error, not a reason to hash the staged content: a
+    // hash over staged bytes could never match a later disk read and
+    // would poison every Apply until the next reload (C3).
+    let disk_content = decrypt_from_disk(&path)?;
     snapshot.save_hash = career_save_hash(&path, &disk_content);
     Ok(snapshot)
+}
+
+/// Truck career XP from the active save's game.sii (the economy
+/// unit's `experience_points`), distinguishing "the save could not be
+/// read" (Err) from "the save has no truck XP field" (Ok(None)), so
+/// callers do not silently fall back to the info.sii total on a read
+/// failure (L8).
+pub fn try_read_truck_xp(profile_state: State<'_, AppProfileState>) -> Result<Option<i64>, String> {
+    let path = get_active_save_path(profile_state.inner())
+        .map_err(|error| error.user_message)?
+        .with_file_name("game.sii");
+    let content = decrypt_if_needed(&path)?;
+    Ok(super::coaches::career_xp_from_content(&content).0)
 }
 
 /// Truck career XP from the active save's game.sii (the economy
@@ -39,13 +55,10 @@ pub fn read_project_coaches(
 /// stores as truck + bus XP, so using it as the truck XP would inflate
 /// the truck career by the bus amount on every apply. Returns None
 /// when the save cannot be read or has no economy XP; callers fall
-/// back to the displayed value.
+/// back to the displayed value. Prefer `try_read_truck_xp` when the
+/// distinction between "unreadable" and "no XP field" matters.
 pub fn read_truck_xp(profile_state: State<'_, AppProfileState>) -> Option<i64> {
-    let path = get_active_save_path(profile_state.inner())
-        .ok()?
-        .with_file_name("game.sii");
-    let content = decrypt_if_needed(&path).ok()?;
-    super::coaches::career_xp_from_content(&content).0
+    try_read_truck_xp(profile_state).ok().flatten()
 }
 pub fn edit_career_xp(
     xp: i64,
@@ -68,24 +81,26 @@ pub fn edit_career_xp(
 /// Keep info.sii's summary fields in sync with a game.sii edit, so the
 /// dashboard / Save Editor tiles (which read info.sii) show staged
 /// values immediately instead of the pre-edit summary. Mirrors the
-/// batch edit's info.sii handling. A missing info.sii, or a missing
-/// field inside it, is silently skipped: the game regenerates the
-/// summary on next load, and the game.sii edit is what matters.
+/// batch edit's info.sii handling. The sync stays best-effort — the
+/// game regenerates the summary on next load, and the game.sii edit is
+/// what matters — but failures are now returned to the caller (L5)
+/// instead of silently skipped, so they can at least be logged.
 /// Staging-aware: the sync is held in memory until Save, like the
 /// game.sii edit it mirrors.
-fn sync_info_summary_field(game_sii_path: &Path, fields: &[&str], value: i64) {
+fn sync_info_summary_field(
+    game_sii_path: &Path,
+    fields: &[&str],
+    value: i64,
+) -> Result<(), String> {
     let info_path = game_sii_path.with_file_name("info.sii");
-    let Ok(content) = decrypt_if_needed(&info_path) else {
-        return;
-    };
-    let Ok(updated) = replace_numeric_fields(&content, fields, value, "", "info.sii sync")
-    else {
-        return;
-    };
+    let content = decrypt_if_needed(&info_path)?;
+    let updated = replace_numeric_fields(&content, fields, value, "info.sii sync failed", "info.sii sync")
+        .map_err(|error| error.technical_details)?;
     if updated == content {
-        return;
+        return Ok(());
     }
-    let _ = write_save_text(&info_path, &updated);
+    write_save_text(&info_path, &updated).map_err(|error| error.user_message)?;
+    Ok(())
 }
 
 fn write_career_xp(
@@ -108,8 +123,25 @@ fn write_career_xp(
     }
     let content = super::coaches::patch_xp(&original, career, xp)?;
     if content == original {
-        return Ok(());
+        // C4: an unchanged value is not a save. Report it distinctly
+        // so the UI does not print a green "saved" toast for a no-op;
+        // the GUI maps this to a neutral "already at that value".
+        return Err("coaches.no_change".to_string());
     }
+    // L7: single career-XP edits must be undoable like the batch edit:
+    // create an UndoBeforeEdit snapshot of the pre-edit disk state
+    // (under staging the disk state is still the pre-edit state, so
+    // snapshotting at edit time is correct, as the batch already does).
+    backup_service::create_backup_for_targets_with_type(
+        profile_state,
+        backup_service::BACKUP_TYPE_UNDO_BEFORE_EDIT,
+        UNDO_SNAPSHOT_LABEL,
+        &backup_service::recommended_targets(&path),
+    )
+    .map_err(|error| {
+        dev_log!("undo snapshot failed: {}", error);
+        "Could not create undo snapshot".to_string()
+    })?;
     let result = write_text_with_auto_backup(
         profile_state,
         &path,
@@ -128,19 +160,25 @@ fn write_career_xp(
                 .map_err(|error| failure("coaches.verify_failed", error))
         },
     );
-    // Truck XP is also shown from info.sii; bus XP has no info.sii field.
-    // Only sync when the game.sii write succeeded. info.sii stores the
-    // TOTAL (truck + bus) XP, so keep it a total: add the bus XP from
-    // the pre-edit content (a truck edit never touches it).
-    if result.is_ok() && career == super::coaches::Career::Truck {
-        let bus_xp = super::coaches::career_xp_from_content(&original)
-            .1
-            .unwrap_or(0);
-        sync_info_summary_field(
+    // info.sii stores the TOTAL (truck + bus) XP, so every career edit
+    // re-syncs it: a truck edit adds the untouched bus XP, and a bus
+    // edit (C5) adds the untouched truck XP. Only sync when the
+    // game.sii write succeeded.
+    if result.is_ok() {
+        let (truck_xp, bus_xp) = super::coaches::career_xp_from_content(&original);
+        let total = match career {
+            super::coaches::Career::Truck => xp.saturating_add(bus_xp.unwrap_or(0)),
+            super::coaches::Career::Bus => truck_xp.unwrap_or(0).saturating_add(xp),
+        };
+        if let Err(error) = sync_info_summary_field(
             &path,
             &["info_players_experience", "experience_points"],
-            xp.saturating_add(bus_xp),
-        );
+            total,
+        ) {
+            // L5: the sync is best-effort, but a failure must not
+            // vanish silently.
+            dev_log!("info.sii XP sync failed: {}", error);
+        }
         decrypt_cache.invalidate_path(&path.with_file_name("info.sii"));
     }
     decrypt_cache.invalidate_path(&path);
@@ -164,11 +202,54 @@ pub fn save_pending_changes(
     if staged.is_empty() {
         return Ok(Vec::new());
     }
+    // 14.2: one pre-flush backup covering every staged target, instead
+    // of one per file (each of which backed up both siblings, producing
+    // two near-identical Auto backups per flush and no single snapshot
+    // of the pre-flush state). If it fails, nothing is written and
+    // everything is re-staged.
+    let mut backup_targets: Vec<PathBuf> = Vec::new();
+    for (path, _) in &staged {
+        for target in backup_service::recommended_targets(path) {
+            if !backup_targets.contains(&target) {
+                backup_targets.push(target);
+            }
+        }
+    }
+    if let Err(error) = backup_service::create_backup_for_targets(
+        profile_state.inner(),
+        "before explicit save",
+        &backup_targets,
+    ) {
+        dev_log!("explicit-save backup failed: {}", error);
+        for (path, content) in &staged {
+            save_session::stage_save(path, content);
+        }
+        profile_cache.invalidate_save_data();
+        profile_cache.invalidate_vehicle_data();
+        return Err("Automatisches Backup konnte nicht erstellt werden.".to_string());
+    }
+    // L6: write game.sii files before their info.sii summaries, so a
+    // failed game.sii write never leaves the summary ahead of the
+    // authoritative save. The take order is already sorted by path
+    // (game.sii before info.sii within a directory); sort explicitly
+    // so the guarantee holds across directories too (stable sort keeps
+    // the take order within each group).
+    let mut ordered = staged;
+    ordered.sort_by_key(|(path, _)| path.file_name().is_some_and(|name| name == "info.sii"));
     let mut saved = Vec::new();
     let mut first_error: Option<String> = None;
     let mut failed = Vec::new();
-    for (path, content) in staged {
-        let result = write_text_to_disk(
+    let mut failed_paths: Vec<PathBuf> = Vec::new();
+    for (path, content) in ordered {
+        // L6: never write an info.sii summary whose sibling game.sii
+        // failed to flush in this same run; re-stage it instead.
+        if path.file_name().is_some_and(|name| name == "info.sii")
+            && failed_paths.contains(&path.with_file_name("game.sii"))
+        {
+            failed.push((path, content));
+            continue;
+        }
+        let result = write_text_to_disk_inner(
             profile_state.inner(),
             &path,
             "save_pending_changes",
@@ -185,6 +266,7 @@ pub fn save_pending_changes(
                     ))
                 }
             },
+            false,
         );
         match result {
             Ok(()) => {
@@ -195,6 +277,7 @@ pub fn save_pending_changes(
                 if first_error.is_none() {
                     first_error = Some(error.user_message.clone());
                 }
+                failed_paths.push(path.clone());
                 failed.push((path, content));
             }
         }
@@ -337,6 +420,34 @@ fn write_text_to_disk<F>(
 where
     F: FnOnce(&str) -> CommandResult<()>,
 {
+    write_text_to_disk_inner(
+        profile_state,
+        path,
+        action,
+        action_reason,
+        success_message,
+        content,
+        verify_write,
+        true,
+    )
+}
+
+/// Same as `write_text_to_disk`, but the caller decides whether a
+/// backup is created: the explicit-Save flush creates one backup for
+/// all staged targets up front (14.2) and passes `false` here.
+fn write_text_to_disk_inner<F>(
+    profile_state: &AppProfileState,
+    path: &Path,
+    action: &str,
+    action_reason: &str,
+    success_message: &str,
+    content: &str,
+    verify_write: F,
+    create_backup: bool,
+) -> CommandResult<()>
+where
+    F: FnOnce(&str) -> CommandResult<()>,
+{
     let mut context = logging_service::resolve_active_context(profile_state);
     context.extra.insert(
         "target".to_string(),
@@ -351,28 +462,30 @@ where
         &context,
     );
 
-    let backup = match backup_service::create_backup_for_targets(
-        profile_state,
-        action_reason,
-        &backup_service::recommended_targets(path),
-    ) {
-        Ok(backup) => backup,
-        Err(error) => {
-            let user_message = "Automatisches Backup konnte nicht erstellt werden.";
-            let _ = logging_service::record_error(
-                action,
-                Some("auto_backup_failed"),
-                user_message,
-                Some(&error),
-                &context,
-            );
-            return Err(failure(user_message, error));
-        }
-    };
+    if create_backup {
+        let backup = match backup_service::create_backup_for_targets(
+            profile_state,
+            action_reason,
+            &backup_service::recommended_targets(path),
+        ) {
+            Ok(backup) => backup,
+            Err(error) => {
+                let user_message = "Automatisches Backup konnte nicht erstellt werden.";
+                let _ = logging_service::record_error(
+                    action,
+                    Some("auto_backup_failed"),
+                    user_message,
+                    Some(&error),
+                    &context,
+                );
+                return Err(failure(user_message, error));
+            }
+        };
 
-    context
-        .extra
-        .insert("backupId".to_string(), backup.backup_id.clone());
+        context
+            .extra
+            .insert("backupId".to_string(), backup.backup_id.clone());
+    }
 
     if let Err(error) = fs::write(path, content.as_bytes()) {
         let technical = error.to_string();
@@ -488,20 +601,11 @@ fn resolve_custom_reset_values(
                 format!("Requested level {} exceeds max level {}", value, max_level),
             ));
         }
-        Some(value) => {
-            let minimum_xp = total_xp_to_reach_level(value);
-            let next_increase = xp_required_for_level(value);
-            if value < max_level && minimum_xp == 0 && next_increase == 0 {
-                return Err(failure(
-                    "Invalid level value",
-                    format!(
-                        "Level table does not expose progression data for level {}",
-                        value
-                    ),
-                ));
-            }
-            Some(value)
-        }
+        // L4: no per-level progression guard is needed here — every
+        // table row below the max has non-zero progression data, so
+        // the old `minimum_xp == 0 && next_increase == 0` check could
+        // never fire.
+        Some(value) => Some(value),
         None => None,
     };
 
@@ -511,11 +615,31 @@ fn resolve_custom_reset_values(
         (None, None) => None,
     };
 
+    // L2: when both a level and an XP value are supplied, XP wins (the
+    // level -> XP conversion above is only reachable with XP unset).
+    // Log the disagreement so a silently ignored Target Level is at
+    // least visible in the trace log.
+    if let (Some(level), Some(xp)) = (resolved_level, resolved_xp) {
+        if calculate_level(xp).level != level {
+            dev_log!(
+                "[trace] BATCH level {} ignored; XP {} wins (level {})",
+                level,
+                xp,
+                calculate_level(xp).level
+            );
+        }
+    }
+
     let resolved_money = money.map(|value| value.max(0));
 
     Ok(ResolvedCustomResetValues {
         money: resolved_money,
-        level: resolved_level.or_else(|| resolved_xp.map(|value| calculate_level(value).level)),
+        // L2: report the level actually written (derived from the
+        // resolved XP), not the requested level that XP may have
+        // overridden.
+        level: resolved_xp
+            .map(|value| calculate_level(value).level)
+            .or(resolved_level),
         xp: resolved_xp,
     })
 }
@@ -536,8 +660,11 @@ fn replace_numeric_fields(
                 failure(user_message, format!("{} regex invalid: {}", field, error))
             })?;
         if pattern.is_match(&updated) {
+            // L5: replace the FIRST match only. A summary file must
+            // not have every same-named line overwritten with one
+            // value; each field occurs once in its file.
             updated = pattern
-                .replace_all(&updated, format!("${{1}}{}: {}", field, value))
+                .replace(&updated, format!("${{1}}{}: {}", field, value))
                 .to_string();
             replaced = true;
         }
@@ -971,12 +1098,30 @@ pub fn edit_xp(
         decrypt_cache.inner(),
     )
 }
+/// Apply a target LEVEL (not XP): convert the level to the XP the
+/// level table requires for it before writing (L1). The old code wrote
+/// the level number itself as XP, destroying careers (typing 50 wrote
+/// XP 50, level 0). Levels above the table max (256) are rejected,
+/// matching the batch edit.
 pub fn edit_level(
-    xp: i64,
+    level: i64,
     profile_state: State<'_, AppProfileState>,
     profile_cache: State<'_, ProfileCache>,
     decrypt_cache: State<'_, DecryptCache>,
 ) -> Result<(), String> {
+    if level < 0 {
+        return Err("Invalid level value: level cannot be negative".to_string());
+    }
+    let max_level = calculate_level(u64::MAX).level;
+    if level as u64 > max_level as u64 {
+        return Err(format!(
+            "Invalid level value: level {} exceeds max level {}",
+            level, max_level
+        ));
+    }
+    let xp = total_xp_to_reach_level(level as u32);
+    let xp = i64::try_from(xp)
+        .map_err(|_| "Invalid level value: XP exceeds i64 range".to_string())?;
     write_career_xp(
         xp,
         super::coaches::Career::Truck,
@@ -1003,13 +1148,15 @@ pub fn edit_player_money(
     let path = get_active_save_path(profile_state.inner()).map_err(|error| error.user_message)?;
     let content = decrypt_if_needed(&path)?;
 
-    let re_money = Regex::new(r"money_account:\s*(\d+)").map_err(|e| e.to_string())?;
+    // 14.4: anchor to the start of the line like edit_money does —
+    // the unanchored pattern also matched inside `info_money_account:`.
+    let re_money = Regex::new(r"(?m)^(\s*)money_account:\s*\d+").map_err(|e| e.to_string())?;
 
     if !re_money.is_match(&content) {
         return Err("money_account nicht gefunden".into());
     }
 
-    let new_content = re_money.replace(&content, format!("money_account: {}", value));
+    let new_content = re_money.replace(&content, format!("${{1}}money_account: {}", value));
 
     write_text_with_auto_backup(
         profile_state.inner(),
@@ -1022,7 +1169,12 @@ pub fn edit_player_money(
     )
     .map_err(|error| error.user_message)?;
     // Keep info.sii's summary in step so the tiles show the new value.
-    sync_info_summary_field(&path, &["info_money_account", "money_account"], value);
+    if let Err(error) =
+        sync_info_summary_field(&path, &["info_money_account", "money_account"], value)
+    {
+        // L5: best-effort, but a failure must not vanish silently.
+        dev_log!("info.sii money sync failed: {}", error);
+    }
     decrypt_cache.invalidate_path(&path);
     decrypt_cache.invalidate_path(&path.with_file_name("info.sii"));
     profile_cache.invalidate_save_data();
@@ -1061,15 +1213,38 @@ pub fn edit_skill_value(
     let path = get_active_save_path(profile_state.inner()).map_err(|error| error.user_message)?;
     let content = decrypt_if_needed(&path)?;
 
-    // Regex dynamisch je Skill
-    let re = Regex::new(&format!(r"\b{}\s*:\s*\d+", regex::escape(&skill)))
-        .map_err(|e| e.to_string())?;
-
-    if !re.is_match(&content) {
-        return Err(format!("Skill '{}' nicht gefunden", skill));
+    // S1: ADR maxes at 63 (bitmask), the other five skills at 6.
+    // Reject out-of-range values here so no caller can write an
+    // invalid one. (The GUI sliders and Max All handlers still need
+    // their own fix: they cap ADR at 6 and Max All writes 6.)
+    let max_value = match skill.as_str() {
+        "adr" => Some(63),
+        "long_dist" | "heavy" | "fragile" | "urgent" | "mechanical" => Some(6),
+        _ => None,
+    };
+    if value < 0 || max_value.is_some_and(|max| value > max) {
+        let range = max_value
+            .map(|max| format!("0-{}", max))
+            .unwrap_or_else(|| "0 or more".to_string());
+        return Err(format!(
+            "Skill '{}' value {} is out of range ({})",
+            skill, value, range
+        ));
     }
 
-    let new_content = re.replace(&content, format!("{}: {}", skill, value));
+    // S2: patch the field structurally inside the economy unit instead
+    // of a first-match regex over the whole 12 MB file — AI drivers
+    // carry skill fields too, and only serialization order saved the
+    // old code.
+    let new_content = super::coaches::patch_economy_field(&content, &skill, value).map_err(
+        |error| {
+            if error == "coaches.field_missing" {
+                format!("Skill '{}' nicht gefunden", skill)
+            } else {
+                error
+            }
+        },
+    )?;
 
     write_text_with_auto_backup(
         profile_state.inner(),
@@ -1324,8 +1499,20 @@ pub fn edit_config_value(
 ) -> Result<(), String> {
     let path = ets2_base_config_path().ok_or("Globaler Config-Pfad nicht gefunden".to_string())?;
     let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let re = Regex::new(&format!(r#"uset {}\s*"?.*"?"#, payload.key))
-        .map_err(|error| format!("Config-Regel ungültig: {}", error))?;
+    // P9: escape the user-typed key — it is interpolated into the regex.
+    let re = Regex::new(&format!(
+        r#"uset {}\s*"?.*"?"#,
+        regex::escape(&payload.key)
+    ))
+    .map_err(|error| format!("Config-Regel ungültig: {}", error))?;
+    // S3: an unknown key must fail instead of reporting success for a
+    // replacement that never happened.
+    if !re.is_match(&content) {
+        return Err(format!(
+            "Config key '{}' nicht in config.cfg gefunden",
+            payload.key
+        ));
+    }
     let new_content = re.replace(
         &content,
         format!(r#"uset {} "{}""#, payload.key, payload.value),
@@ -1359,8 +1546,20 @@ pub fn edit_save_config_value(
         current_profile_path(profile_state.inner()).map_err(|error| error.user_message)?;
     let path = quicksave_config_path(&profile);
     let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let re = Regex::new(&format!(r#"uset {}\s*"?.*"?"#, payload.key))
-        .map_err(|error| format!("Save-Config-Regel ungültig: {}", error))?;
+    // P9: escape the user-typed key — it is interpolated into the regex.
+    let re = Regex::new(&format!(
+        r#"uset {}\s*"?.*"?"#,
+        regex::escape(&payload.key)
+    ))
+    .map_err(|error| format!("Save-Config-Regel ungültig: {}", error))?;
+    // S3: an unknown key must fail instead of reporting success for a
+    // replacement that never happened.
+    if !re.is_match(&content) {
+        return Err(format!(
+            "Config key '{}' nicht in player/config.cfg gefunden",
+            payload.key
+        ));
+    }
     let new_content = re.replace(
         &content,
         format!(r#"uset {} "{}""#, payload.key, payload.value),

@@ -180,6 +180,10 @@ pub fn current_active_trip(runtime: &CareerRuntime) -> Result<Option<ActiveTripV
 
 pub fn list_trips(db_path: &Path, limit: usize) -> Result<Vec<TripSummary>, String> {
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|e| e.to_string())?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| e.to_string())?;
     list_trips_from_connection(&conn, limit)
 }
 
@@ -259,7 +263,20 @@ fn start_trip(
             bonus_payout: 0,
         }
     } else {
-        contracts::select_dispatch_assignment(&conn)?
+        // D1: there is no contract for a free drive. The old code fell back
+        // to a seeded demo contract here, which paid out a contract bonus
+        // and recorded a contract completion for every engine-on drive.
+        // Free drives are recorded as open-market trips instead, with no
+        // contract attached (record_completion(None) is a no-op).
+        contracts::DispatchAssignment {
+            job_id: format!("job-{}", now.timestamp()),
+            contract_id: None,
+            company_name: "Open Market".to_string(),
+            origin: "Telemetry Start".to_string(),
+            destination: "Telemetry Destination".to_string(),
+            cargo: "General cargo".to_string(),
+            bonus_payout: 0,
+        }
     };
     employees::mark_driver_status(&conn, "on_duty")?;
 
@@ -628,7 +645,12 @@ fn open_connection(runtime: &CareerRuntime) -> Result<Connection, String> {
         .clone()
         .ok_or_else(|| "Career database path not initialized".to_string())?;
 
-    Connection::open(db_path).map_err(|e| e.to_string())
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|e| e.to_string())?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| e.to_string())?;
+    Ok(conn)
 }
 
 fn telemetry_json(sample: TelemetrySample) -> String {

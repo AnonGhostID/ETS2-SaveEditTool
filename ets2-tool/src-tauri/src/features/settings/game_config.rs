@@ -80,7 +80,7 @@ pub fn read_base_config(cache: State<'_, ProfileCache>) -> Result<BaseGameConfig
 // Der Funktionskopf akzeptiert den Pfad direkt
 pub fn read_save_config(
     profile_path: &str,
-    cache: State<'_, ProfileCache>,
+    _cache: State<'_, ProfileCache>,
 ) -> Result<SaveGameConfig, String> {
     let mut trace =
         TraceScope::with_fields("read_save_config", &[("path", profile_path.to_string())]);
@@ -88,11 +88,10 @@ pub fn read_save_config(
 
     dev_log!("Lese Config aus Profilpfad: {}", profile_path);
 
-    if let Some(cached) = cache.get_save_config() {
-        dev_log!("Save config aus Cache geliefert");
-        trace.finish_ok();
-        return Ok(cached);
-    }
+    // NOTE (P11): the ProfileCache save_config slot is not keyed by
+    // profile, so a cached value from another profile could be served
+    // here. Always read from disk until the cache is keyed by profile
+    // path (state.rs); this file is small, so the cost is negligible.
 
     // Verwende die korrekte Hilfsfunktion, um den vollen Pfad zur config.cfg innerhalb des Profilordners zu erhalten
     let path = quicksave_config_path(profile_path);
@@ -121,7 +120,6 @@ pub fn read_save_config(
         data.factor_parking_doubles,
     );
 
-    cache.cache_save_config(data.clone());
     trace.finish_ok();
     Ok(data)
 }

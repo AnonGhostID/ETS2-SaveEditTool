@@ -102,18 +102,27 @@ fn verify_written_content(
     expected: &str,
     action: &str,
 ) -> Result<(), String> {
-    let actual = fs::read_to_string(path).map_err(|error| {
-        let context = logging_service::resolve_active_context(profile_state);
-        let technical = error.to_string();
-        let _ = logging_service::record_error(
-            action,
-            Some("write_verification_failed"),
-            "The trailer save could not be read back after writing.",
-            Some(&technical),
-            &context,
-        );
-        "trailer_write_verification_failed".to_string()
-    })?;
+    let path_buf = PathBuf::from(path);
+    // With explicit-save staging on, the edit lives in the staging
+    // overlay, not on disk yet — verify against the staged content
+    // instead of the stale disk file, or every staged edit would
+    // report a false verification failure (V1).
+    let actual = if let Some(staged) = save_session::staged_content(&path_buf) {
+        staged
+    } else {
+        fs::read_to_string(path).map_err(|error| {
+            let context = logging_service::resolve_active_context(profile_state);
+            let technical = error.to_string();
+            let _ = logging_service::record_error(
+                action,
+                Some("write_verification_failed"),
+                "The trailer save could not be read back after writing.",
+                Some(&technical),
+                &context,
+            );
+            "trailer_write_verification_failed".to_string()
+        })?
+    };
 
     if actual != expected {
         let context = logging_service::resolve_active_context(profile_state);
@@ -477,12 +486,13 @@ pub async fn repair_player_truck(
         }
     }
 
-    // Fix wheels_wear array
+    // Fix wheels_wear array — preserve each wheel's index (V2: the old
+    // code rewrote every entry to wheels_wear[0], dropping indices 1/2).
     let re_wheels =
-        Regex::new(r"wheels_wear\[\d+\]:\s*[^ \r\n]+").map_err(|error| error.to_string())?;
+        Regex::new(r"(wheels_wear\[\d+\]:\s*)([^ \r\n]+)").map_err(|error| error.to_string())?;
     block = re_wheels
-        .replace_all(&block, |_: &Captures| {
-            format!("wheels_wear[0]: {}", float_to_hex(0.0))
+        .replace_all(&block, |caps: &Captures| {
+            format!("{}{}", &caps[1], float_to_hex(0.0))
         })
         .to_string();
 

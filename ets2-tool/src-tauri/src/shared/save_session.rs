@@ -71,6 +71,13 @@ pub fn dirty_paths() -> Vec<PathBuf> {
     lock().staged.keys().cloned().collect()
 }
 
+/// Drop the staged working copy for one path, if any. Used when a
+/// write is rolled back (SW3) so rejected content cannot be flushed
+/// later by a top-bar Save.
+pub fn remove_staged(path: &Path) {
+    lock().staged.remove(path);
+}
+
 /// Drop all staged content. The disk files are untouched.
 pub fn discard() {
     lock().staged.clear();

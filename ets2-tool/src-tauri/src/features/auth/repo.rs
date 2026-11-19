@@ -1,6 +1,29 @@
 use rusqlite::{Connection, OptionalExtension, params};
+use sha2::{Digest, Sha256};
 
 use crate::features::auth::models::{NewSession, NewUser, UserRecord};
+
+/// One-way SHA-256 hash of a session token. Only the hash is ever persisted
+/// (`sessions.token_hash` and the on-disk session file); the raw bearer
+/// token lives only in memory (AS3).
+pub fn hash_session_token(token: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// True when any account with the admin role exists, regardless of whether
+/// it is the seeded default admin (AS1).
+pub fn any_admin_exists(conn: &Connection) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT 1 FROM users WHERE role = 'admin' LIMIT 1",
+        [],
+        |_row| Ok(()),
+    )
+    .optional()
+    .map(|value| value.is_some())
+    .map_err(|e| e.to_string())
+}
 
 pub fn find_user_by_email(conn: &Connection, email: &str) -> Result<Option<UserRecord>, String> {
     conn.query_row(
@@ -188,11 +211,12 @@ pub fn load_user_by_id(conn: &Connection, user_id: i64) -> Result<Option<UserRec
 }
 
 pub fn insert_session(conn: &Connection, session: &NewSession) -> Result<i64, String> {
+    // Store only the hash of the bearer token, never the raw token (AS3).
     conn.execute(
         r#"
         INSERT INTO sessions (
             user_id,
-            token,
+            token_hash,
             created_at,
             expires_at,
             last_used_at
@@ -200,7 +224,7 @@ pub fn insert_session(conn: &Connection, session: &NewSession) -> Result<i64, St
         "#,
         params![
             session.user_id,
-            session.token,
+            hash_session_token(&session.token),
             session.created_at,
             session.expires_at,
             session.last_used_at
@@ -214,13 +238,20 @@ pub fn find_session_by_token(
     conn: &Connection,
     token: &str,
 ) -> Result<Option<(i64, i64, String, String)>, String> {
+    find_session_by_token_hash(conn, &hash_session_token(token))
+}
+
+pub fn find_session_by_token_hash(
+    conn: &Connection,
+    token_hash: &str,
+) -> Result<Option<(i64, i64, String, String)>, String> {
     conn.query_row(
         r#"
         SELECT id, user_id, expires_at, last_used_at
         FROM sessions
-        WHERE token = ?1 AND revoked_at IS NULL
+        WHERE token_hash = ?1 AND revoked_at IS NULL
         "#,
-        params![token],
+        params![token_hash],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     )
     .optional()
@@ -251,8 +282,22 @@ pub fn revoke_session_by_token(
     revoked_at: &str,
 ) -> Result<(), String> {
     conn.execute(
-        "UPDATE sessions SET revoked_at = ?1 WHERE token = ?2",
-        params![revoked_at, token],
+        "UPDATE sessions SET revoked_at = ?1 WHERE token_hash = ?2",
+        params![revoked_at, hash_session_token(token)],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Revoke every live session belonging to a user, not just one token (AS3).
+pub fn revoke_all_sessions_for_user(
+    conn: &Connection,
+    user_id: i64,
+    revoked_at: &str,
+) -> Result<(), String> {
+    conn.execute(
+        "UPDATE sessions SET revoked_at = ?1 WHERE user_id = ?2 AND revoked_at IS NULL",
+        params![revoked_at, user_id],
     )
     .map_err(|e| e.to_string())?;
     Ok(())

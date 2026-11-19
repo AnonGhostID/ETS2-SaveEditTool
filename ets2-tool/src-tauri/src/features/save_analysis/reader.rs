@@ -130,6 +130,29 @@ pub fn read_traffic_value() -> Result<i64, String> {
     Ok(value.clamp(0, 10))
 }
 
+/// R4: body of the first `economy` unit in the content, if any, so
+/// player/economy fields are read from the economy unit instead of the
+/// first match anywhere in the file. Returns None for files without an
+/// economy unit (e.g. info.sii), in which case callers fall back to the
+/// whole content.
+fn economy_unit_body(content: &str) -> Option<String> {
+    let re = Regex::new(r"(?m)^\s*economy\s*:\s*[A-Za-z0-9._]+\s*\{").ok()?;
+    let matched = re.find(content)?;
+    let brace_start = content[matched.start()..].find('{')? + matched.start();
+    let mut depth = 0i32;
+    for (offset, character) in content[brace_start..].char_indices() {
+        if character == '{' {
+            depth += 1;
+        } else if character == '}' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(content[brace_start + 1..brace_start + offset].to_string());
+            }
+        }
+    }
+    None
+}
+
 fn read_all_save_data_from_path(
     path: PathBuf,
     decrypt_cache: &DecryptCache,
@@ -140,9 +163,15 @@ fn read_all_save_data_from_path(
         &[("path", path.display().to_string())],
     );
 
+    // R4: the main patterns match game.sii fields (money_account,
+    // experience_points) that also exist on AI driver units. Search the
+    // economy unit when the file has one, so a different unit order
+    // cannot misread a driver's values as the player's.
+    let economy_scope = economy_unit_body(&content);
+    let main_scope = economy_scope.as_deref().unwrap_or(&content);
     let find_val = |main_pat: &str, info_pat: &str| -> Option<i64> {
         let re_main = Regex::new(main_pat).unwrap();
-        if let Some(cap) = re_main.captures(&content) {
+        if let Some(cap) = re_main.captures(main_scope) {
             if let Ok(val) = cap[1].parse::<i64>() {
                 return Some(val);
             }

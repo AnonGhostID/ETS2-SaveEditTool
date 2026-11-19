@@ -21,26 +21,50 @@ pub fn clone_profile(
     let parent = source
         .parent()
         .ok_or("Kein Parent-Verzeichnis".to_string())?;
-    let new_hex = hex_float::text_to_hex(new_name);
-    let target_dir = parent.join(&new_hex);
-
-    if target_dir.exists() {
-        return Err("Zielprofil existiert bereits".to_string());
-    }
+    // P5: honor the clone options instead of always hex-renaming the
+    // folder and always rewriting the internal name.
+    let target_dir = if options.replace_hex {
+        let new_hex = hex_float::text_to_hex(new_name);
+        let target_dir = parent.join(&new_hex);
+        if target_dir.exists() {
+            return Err("Zielprofil existiert bereits".to_string());
+        }
+        target_dir
+    } else {
+        // Keep the source folder identifier; the clone still needs a
+        // distinct directory, so append a suffix (numbered if taken).
+        let base = source
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| hex_float::text_to_hex(new_name));
+        let mut candidate = parent.join(format!("{}_copy", base));
+        let mut suffix = 2;
+        while candidate.exists() {
+            candidate = parent.join(format!("{}_copy{}", base, suffix));
+            suffix += 1;
+        }
+        candidate
+    };
 
     // 1. ZIP-Backup
     if options.backup {
         create_zip_backup(source, parent)?;
     }
 
-    // 2. Profilname aus profile.sii lesen und neuen Inhalt vorbereiten
-    let source_profile_sii = source.join("profile.sii");
-    if !source_profile_sii.exists() {
-        return Err("profile.sii nicht gefunden".to_string());
-    }
-
-    let decrypted = decrypt_if_needed(&source_profile_sii).map_err(|e| e.to_string())?;
-    let updated_profile_sii = change_profile_name_in_sii(&decrypted, new_name)?;
+    // 2. Profilname aus profile.sii lesen und neuen Inhalt vorbereiten.
+    // Only when replace_text is set; otherwise the clone keeps the
+    // source's internal profile name untouched.
+    let updated_profile_sii = if options.replace_text {
+        let source_profile_sii = source.join("profile.sii");
+        if !source_profile_sii.exists() {
+            return Err("profile.sii nicht gefunden".to_string());
+        }
+        let decrypted =
+            decrypt_if_needed(&source_profile_sii).map_err(|e| e.to_string())?;
+        Some(change_profile_name_in_sii(&decrypted, new_name)?)
+    } else {
+        None
+    };
 
     // 3. Profil kopieren und profile.sii aktualisieren
     if let Err(e) = copy_dir_recursive(source, &target_dir) {
@@ -48,15 +72,17 @@ pub fn clone_profile(
         return Err(e);
     }
 
-    let target_profile_sii = target_dir.join("profile.sii");
-    if !target_profile_sii.exists() {
-        let _ = fs::remove_dir_all(&target_dir);
-        return Err("profile.sii nicht gefunden".to_string());
-    }
+    if let Some(updated_profile_sii) = updated_profile_sii {
+        let target_profile_sii = target_dir.join("profile.sii");
+        if !target_profile_sii.exists() {
+            let _ = fs::remove_dir_all(&target_dir);
+            return Err("profile.sii nicht gefunden".to_string());
+        }
 
-    if let Err(e) = fs::write(&target_profile_sii, updated_profile_sii) {
-        let _ = fs::remove_dir_all(&target_dir);
-        return Err(e.to_string());
+        if let Err(e) = fs::write(&target_profile_sii, updated_profile_sii) {
+            let _ = fs::remove_dir_all(&target_dir);
+            return Err(e.to_string());
+        }
     }
 
     Ok(target_dir)
@@ -120,7 +146,27 @@ fn change_profile_name_in_sii(content: &str, new_name: &str) -> Result<String, S
 
     Ok(re
         .replace(content, |caps: &regex::Captures| {
-            format!("{}profile_name: \"{}\"", &caps["indent"], new_name)
+            format!(
+                "{}profile_name: \"{}\"",
+                &caps["indent"],
+                escape_sii_string(new_name)
+            )
         })
         .to_string())
+}
+
+/// P9: escape a user-supplied value before interpolating it into a
+/// quoted SII string, so `"`, `\` or a newline in the name cannot break
+/// out of the value and corrupt the file.
+fn escape_sii_string(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\r' | '\n' => escaped.push(' '),
+            other => escaped.push(other),
+        }
+    }
+    escaped
 }

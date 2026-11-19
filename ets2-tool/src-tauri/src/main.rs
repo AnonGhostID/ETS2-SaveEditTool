@@ -82,6 +82,8 @@ fn initialize_backend() -> AppHandle {
             }
 
             if let Ok(mut conn) = rusqlite::Connection::open(db::sqlite::app_db_path()) {
+                let _ = conn.execute_batch("PRAGMA foreign_keys = ON;");
+                let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
                 if let Err(error) = features::auth::db::ensure_tables(&conn) {
                     crate::dev_log!("[auth] ensure tables failed: {}", error);
                 } else if let Err(error) = features::vtc::db::ensure_tables(&conn) {
@@ -132,7 +134,15 @@ fn initialize_backend() -> AppHandle {
         features::career::plugin_installer::ScsGame::Ets2,
         features::career::plugin_installer::ScsGame::Ats,
     ] {
-        let _ = features::career::plugin_installer::ensure_plugin_files(&app, game);
+        // NT4: surface installer failures instead of discarding them; a
+        // missing plugin means no live telemetry for that game.
+        if let Err(error) = features::career::plugin_installer::ensure_plugin_files(&app, game) {
+            crate::dev_log!(
+                "[career] plugin install failed for {:?}: {}",
+                game,
+                error
+            );
+        }
     }
 
     features::career::service::start_background(app.clone(), runtime);

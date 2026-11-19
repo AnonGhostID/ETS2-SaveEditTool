@@ -140,20 +140,39 @@ fn render_mod_confirm(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             app.mod_confirm = None;
             match confirm {
                 ModConfirm::DeletePreset { id, .. } => {
-                    let _ = delete_mod_preset(app.app.clone(), id);
-                    app.mod_presets =
-                        list_mod_presets(app.app.clone(), Some(app.selected_game.clone()))
-                            .unwrap_or_default();
-                    app.set_status("Deleted mod preset.", false);
+                    // P6/P7: a failed delete used to report success.
+                    match delete_mod_preset(app.app.clone(), id) {
+                        Ok(()) => {
+                            reload_preset_list(app);
+                            app.set_status("Deleted mod preset.", false);
+                        }
+                        Err(e) => app.set_status(format!("Delete failed: {e}"), true),
+                    }
                 }
                 ModConfirm::DeleteSandbox { id, .. } => {
-                    app.mod_sandboxes = delete_mod_sandbox(app.app.clone(), id).ok();
-                    app.set_status("Deleted sandbox.", false);
+                    // P6/P7: a failed delete used to report success and
+                    // wipe the displayed collection.
+                    match delete_mod_sandbox(app.app.clone(), id) {
+                        Ok(collection) => {
+                            app.mod_sandboxes = Some(collection);
+                            app.set_status("Deleted sandbox.", false);
+                        }
+                        Err(e) => app.set_status(format!("Delete failed: {e}"), true),
+                    }
                 }
             }
         }
         Some(false) => app.mod_confirm = None,
         None => {}
+    }
+}
+
+/// Reload the preset list, reporting a failure instead of silently
+/// showing an empty list (P6/P7).
+fn reload_preset_list(app: &mut Ets2NativeApp) {
+    match list_mod_presets(app.app.clone(), Some(app.selected_game.clone())) {
+        Ok(list) => app.mod_presets = list,
+        Err(e) => app.set_status(format!("Preset list reload failed: {e}"), true),
     }
 }
 
@@ -167,7 +186,11 @@ fn render_mod_manager(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             }
         }
         if ui.button("✖ Clear Manual Workshop Folder").clicked() {
-            let _ = clear_manual_workshop_directory(app.app.clone(), app.selected_game.clone());
+            // P6/P7: surface the result instead of discarding it.
+            match clear_manual_workshop_directory(app.app.clone(), app.selected_game.clone()) {
+                Ok(()) => app.set_status("Cleared manual Workshop folder.", false),
+                Err(e) => app.set_status(e, true),
+            }
         }
     });
 
@@ -181,6 +204,7 @@ fn render_mod_manager(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
         ));
         ui.separator();
 
+        let mut workshop_error: Option<String> = None;
         egui::Grid::new("discovered_mods_grid")
             .striped(true)
             .num_columns(7)
@@ -211,7 +235,9 @@ fn render_mod_manager(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     ui.label(m.workshop_id.as_deref().unwrap_or("-"));
                     if let Some(wid) = &m.workshop_id {
                         if ui.small_button("Steam Workshop").clicked() {
-                            let _ = open_workshop_page(wid.clone());
+                            if let Err(e) = open_workshop_page(wid.clone()) {
+                                workshop_error = Some(e);
+                            }
                         }
                     } else {
                         ui.label("-");
@@ -219,6 +245,9 @@ fn render_mod_manager(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     ui.end_row();
                 }
             });
+        if let Some(e) = workshop_error {
+            app.set_status(e, true);
+        }
     } else {
         ui.label("Click 'Quick Scan Mods' or 'Deep Scan Mods' above to inspect your local and Steam Workshop mods.");
     }
@@ -230,16 +259,36 @@ fn render_presets_and_sandboxes(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             ui.heading("Mod Presets");
             ui.horizontal(|ui| {
                 if ui.button("⟳ Load Presets").clicked() {
-                    app.mod_presets =
-                        list_mod_presets(app.app.clone(), Some(app.selected_game.clone()))
-                            .unwrap_or_default();
+                    reload_preset_list(app);
                 }
                 if ui.button("📥 Import Preset JSON").clicked() {
-                    if let Ok(Some(_)) = import_mod_preset(app.app.clone()) {
-                        app.mod_presets =
-                            list_mod_presets(app.app.clone(), Some(app.selected_game.clone()))
-                                .unwrap_or_default();
-                        app.set_status("Imported mod preset.", false);
+                    // P6/P7: surface import failures, and say which
+                    // game the preset belongs to — the list below is
+                    // filtered to the selected game, so an imported
+                    // preset for the other game would otherwise seem
+                    // to vanish.
+                    match import_mod_preset(app.app.clone()) {
+                        Ok(Some(preset)) => {
+                            let game_label = preset.game.display_name();
+                            let preset_name = preset.name.clone();
+                            let imported_game = preset.game.as_str();
+                            reload_preset_list(app);
+                            if imported_game == app.selected_game.as_str() {
+                                app.set_status(
+                                    format!("Imported mod preset `{preset_name}`."),
+                                    false,
+                                );
+                            } else {
+                                app.set_status(
+                                    format!(
+                                        "Imported mod preset `{preset_name}` for {game_label} — switch the game in the top bar to see it."
+                                    ),
+                                    false,
+                                );
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => app.set_status(e, true),
                     }
                 }
             });
@@ -263,9 +312,7 @@ fn render_presets_and_sandboxes(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                         None,
                     ) {
                         Ok(_) => {
-                            app.mod_presets =
-                                list_mod_presets(app.app.clone(), Some(app.selected_game.clone()))
-                                    .unwrap_or_default();
+                            reload_preset_list(app);
                             app.set_status("Saved mod preset.", false);
                         }
                         Err(e) => app.set_status(e, true),
@@ -278,16 +325,32 @@ fn render_presets_and_sandboxes(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                 ui.horizontal(|ui| {
                     ui.label(format!("{} ({} mods)", preset.name, preset.mods.len()));
                     if ui.small_button("Compare").clicked() {
-                        app.preset_compare_result = compare_mod_preset(
+                        // P6/P7: a failed compare used to silently clear
+                        // the old diff; say so.
+                        match compare_mod_preset(
                             app.app.clone(),
                             app.profile_state(),
                             preset.id.clone(),
                             app.selected_game.clone(),
-                        )
-                        .ok();
+                        ) {
+                            Ok(result) => app.preset_compare_result = Some(result),
+                            Err(e) => {
+                                app.preset_compare_result = None;
+                                app.set_status(format!("Compare failed: {e}"), true);
+                            }
+                        }
                     }
                     if ui.small_button("Export").clicked() {
-                        let _ = export_mod_preset(app.app.clone(), preset.id.clone());
+                        // P6/P7: surface the result instead of discarding
+                        // it (an empty path means the user cancelled the
+                        // file picker).
+                        match export_mod_preset(app.app.clone(), preset.id.clone()) {
+                            Ok(path) if !path.is_empty() => {
+                                app.set_status(format!("Exported preset to {path}."), false)
+                            }
+                            Ok(_) => {}
+                            Err(e) => app.set_status(e, true),
+                        }
                     }
                     if ui.small_button("Delete").clicked() {
                         app.mod_confirm = Some(ModConfirm::DeletePreset {
@@ -313,19 +376,31 @@ fn render_presets_and_sandboxes(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
         cols[1].card(|ui| {
             ui.heading("Mod Sandboxes");
             if ui.button("⟳ Load Sandboxes").clicked() {
-                app.mod_sandboxes = load_mod_sandboxes(app.app.clone()).ok();
+                // P6/P7: surface load failures instead of silently
+                // showing an empty list.
+                match load_mod_sandboxes(app.app.clone()) {
+                    Ok(collection) => app.mod_sandboxes = Some(collection),
+                    Err(e) => app.set_status(format!("Sandbox load failed: {e}"), true),
+                }
             }
             ui.horizontal(|ui| {
                 ui.label("Title:");
                 ui.text_edit_singleline(&mut app.new_sandbox_title);
                 if ui.button("Create Sandbox").clicked() && !app.new_sandbox_title.trim().is_empty()
                 {
-                    app.mod_sandboxes = create_mod_sandbox(
+                    // P6/P7: surface create failures instead of silently
+                    // dropping the collection.
+                    match create_mod_sandbox(
                         app.app.clone(),
                         app.new_sandbox_title.trim().to_string(),
                         app.new_sandbox_desc.trim().to_string(),
-                    )
-                    .ok();
+                    ) {
+                        Ok(collection) => {
+                            app.mod_sandboxes = Some(collection);
+                            app.set_status("Created sandbox.", false);
+                        }
+                        Err(e) => app.set_status(format!("Create sandbox failed: {e}"), true),
+                    }
                 }
             });
 
@@ -359,13 +434,22 @@ fn render_presets_and_sandboxes(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                             if ui.small_button("+ Add Mod").clicked()
                                 && !app.workshop_mod_input.trim().is_empty()
                             {
-                                app.mod_sandboxes = add_mod_to_sandbox(
+                                // P6/P7: surface add failures instead of
+                                // silently dropping the collection.
+                                match add_mod_to_sandbox(
                                     app.app.clone(),
                                     sb.id.clone(),
                                     app.workshop_mod_input.trim().to_string(),
                                     Some(true),
-                                )
-                                .ok();
+                                ) {
+                                    Ok(collection) => {
+                                        app.mod_sandboxes = Some(collection);
+                                        app.set_status("Added mod to sandbox.", false);
+                                    }
+                                    Err(e) => {
+                                        app.set_status(format!("Add mod failed: {e}"), true)
+                                    }
+                                }
                             }
                         });
                     });

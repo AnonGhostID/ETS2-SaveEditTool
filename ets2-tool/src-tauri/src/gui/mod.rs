@@ -32,7 +32,6 @@ use crate::features::health_monitor::models::SaveHealthReportDto;
 use crate::features::hub::events::CareerStatus;
 use crate::features::language::commands::{
     LanguageInfo, get_available_languages_command, get_current_language_command,
-    set_language_command,
 };
 use crate::shared::user_log::{UserLogEntry, UserLogStatus};
 use crate::features::mod_profile_manager::models::{
@@ -51,7 +50,7 @@ use crate::features::career::commands::dispatcher_generate_jobs;
 use crate::features::health_monitor::commands::get_active_save_health;
 use crate::features::save_editor::commands::{
     UndoStatusDto, discard_pending_changes, edit_skill_value, get_undo_status,
-    read_truck_xp, save_pending_changes, undo_last_save_change,
+    save_pending_changes, try_read_truck_xp, undo_last_save_change,
 };
 use crate::features::vehicles::editor::{refuel_player_truck, repair_player_truck};
 use crate::shared::save_session;
@@ -182,6 +181,12 @@ impl<T: Send + 'static> BackgroundLoad<T> {
     }
 }
 
+/// C4: `write_career_xp` reports an unchanged value as an error; the GUI
+/// turns it into a neutral note instead of a failure toast.
+pub fn is_no_change_error(error: &str) -> bool {
+    error == "coaches.no_change"
+}
+
 /// A top-bar action deferred by the unsaved-changes prompt. The prompt
 /// offers Save / Discard / Cancel; on Save or Discard the action runs.
 #[derive(Debug, Clone)]
@@ -192,6 +197,9 @@ pub enum PendingTopBarAction {
     /// keeps the previous value to restore on Cancel.
     SwitchGame { new_game: String, old_game: String },
     Reload,
+    /// Closing the window (exit guard): after Save/Discard the close is
+    /// carried out via `close_after_prompt`.
+    Exit,
 }
 
 pub struct Ets2NativeApp {
@@ -209,6 +217,9 @@ pub struct Ets2NativeApp {
     /// A top-bar action (save/profile/game switch, Reload) waiting on the
     /// unsaved-changes prompt. `Some` while the prompt is open.
     pub unsaved_prompt: Option<PendingTopBarAction>,
+    /// Set when the exit guard's prompt resolves: the next frame sends
+    /// the real close command.
+    pub close_after_prompt: bool,
 
     // Global Game / Profile / Save selection
     pub selected_game: String,
@@ -234,6 +245,11 @@ pub struct Ets2NativeApp {
     pub edit_money_input: i64,
     pub edit_xp_input: i64,
     pub edit_level_input: i64,
+    /// L2: whether the batch's Target Level input was edited more
+    /// recently than the Truck XP input. When true the batch passes
+    /// the level (converted to XP) instead of the XP value, so the
+    /// last-edited input wins.
+    pub batch_level_edited_last: bool,
     pub skill_adr: i64,
     pub skill_long_dist: i64,
     pub skill_heavy: i64,
@@ -384,6 +400,7 @@ impl Ets2NativeApp {
             profile_tools_sub_tab: ProfileToolsSubTab::CloneAndRename,
             toasts: VecDeque::new(),
             unsaved_prompt: None,
+            close_after_prompt: false,
 
             selected_game: "ets2".to_string(),
             available_languages,
@@ -407,6 +424,7 @@ impl Ets2NativeApp {
             edit_money_input: 1_000_000,
             edit_xp_input: 50_000,
             edit_level_input: 50,
+            batch_level_edited_last: false,
             skill_adr: 6,
             skill_long_dist: 6,
             skill_heavy: 6,
@@ -561,6 +579,10 @@ impl Ets2NativeApp {
 
     /// Flush staged game.sii edits to disk (top-bar Save button).
     pub fn flush_pending_changes(&mut self) {
+        // U6: count staged files first so a partial flush can report
+        // how many were saved vs re-staged (the backend returns only
+        // the first error).
+        let staged_before = save_session::dirty_paths().len();
         match save_pending_changes(
             self.profile_state(),
             self.profile_cache(),
@@ -571,11 +593,44 @@ impl Ets2NativeApp {
                     self.set_status("Nothing to save.", false);
                 } else {
                     self.reload_active_save_data();
+                    // G9: the flush changed the on-disk save hash, so
+                    // any loaded garage/driver data is stale; refresh
+                    // it in the background so the next garage
+                    // mutation does not fail save_changed_since_load.
+                    if self.garage_list.is_some() || self.ai_driver_mgmt.is_some() {
+                        garages_tab::start_garages_load(self);
+                    }
+                    // SW2: the save changed under any switcher session.
+                    self.invalidate_switcher_state();
                     self.set_status(format!("Saved {} file(s) to disk.", saved.len()), false);
                 }
             }
-            Err(err) => self.set_status(format!("Save failed: {err}"), true),
+            Err(err) => {
+                let still_staged = save_session::dirty_paths().len();
+                let saved_count = staged_before.saturating_sub(still_staged);
+                self.set_status(
+                    format!(
+                        "Save failed: {err} ({saved_count} file(s) saved, {still_staged} still staged.)"
+                    ),
+                    true,
+                );
+            }
         }
+    }
+
+    /// SW2: switcher sessions/previews are bound to the save they were
+    /// scanned on; drop them whenever the save context changes (switch,
+    /// flush, discard) so a stale `can_apply = true` preview can never
+    /// be acted on.
+    pub fn invalidate_switcher_state(&mut self) {
+        self.truck_switch_list = None;
+        self.truck_change_session = None;
+        self.selected_switch_truck_id.clear();
+        self.truck_switch_preview = None;
+        self.trailer_switch_list = None;
+        self.trailer_change_session = None;
+        self.selected_switch_trailer_id.clear();
+        self.trailer_switch_preview = None;
     }
 
     /// Run a top-bar action that was deferred by the unsaved prompt.
@@ -585,15 +640,30 @@ impl Ets2NativeApp {
             PendingTopBarAction::SwitchProfile(profile_path) => {
                 self.select_profile(profile_path)
             }
-            PendingTopBarAction::SwitchGame { new_game, .. } => {
-                self.selected_game = new_game;
-                self.selected_profile_path = None;
-                self.selected_save_path = None;
-                self.refresh_profiles_and_saves();
+            PendingTopBarAction::SwitchGame { new_game, old_game } => {
+                // AS5: confirm with the backend before committing the
+                // UI switch; on failure revert to the previous game.
+                match set_selected_game(new_game.clone(), self.profile_state()) {
+                    Ok(_) => {
+                        self.selected_game = new_game;
+                        self.selected_profile_path = None;
+                        self.selected_save_path = None;
+                        self.refresh_profiles_and_saves();
+                    }
+                    Err(err) => {
+                        self.selected_game = old_game;
+                        self.set_status(format!("Failed to switch game: {err}"), true);
+                    }
+                }
             }
             PendingTopBarAction::Reload => {
                 self.refresh_profiles_and_saves();
                 self.set_status("Profiles and active save reloaded.", false);
+            }
+            PendingTopBarAction::Exit => {
+                // The close itself is sent from update() after the
+                // prompt resolves (see close_after_prompt).
+                self.close_after_prompt = true;
             }
         }
     }
@@ -613,6 +683,8 @@ impl Ets2NativeApp {
         } else {
             let _ = discard_pending_changes(self.profile_cache(), self.decrypt_cache());
             self.reload_active_save_data();
+            // SW2: discarding changed the effective save content.
+            self.invalidate_switcher_state();
         }
         self.perform_top_bar_action(action);
     }
@@ -628,6 +700,7 @@ impl Ets2NativeApp {
             PendingTopBarAction::SwitchProfile(_) => "switching profiles",
             PendingTopBarAction::SwitchGame { .. } => "switching games",
             PendingTopBarAction::Reload => "reloading",
+            PendingTopBarAction::Exit => "closing",
         };
         let dirty_count = save_session::dirty_paths().len();
         let mut choice: Option<bool> = None; // Some(true) = save, Some(false) = discard
@@ -701,7 +774,10 @@ impl Ets2NativeApp {
     }
 
     pub fn refresh_profiles_and_saves(&mut self) {
-        let _ = set_selected_game(self.selected_game.clone(), self.profile_state());
+        // AS5: surface a failed game selection instead of discarding it.
+        if let Err(err) = set_selected_game(self.selected_game.clone(), self.profile_state()) {
+            self.set_status(format!("Failed to set game: {err}"), true);
+        }
         self.profiles = find_ets2_profiles(self.profile_state());
 
         let last_profile = read_last_profile(self.app.clone()).ok().flatten();
@@ -724,15 +800,38 @@ impl Ets2NativeApp {
         }
     }
 
+    /// Refresh the profile/save lists, prompting first when staged edits
+    /// exist (U3): a refresh can reselect the profile/save, which would
+    /// strand the staged edits on the wrong target. Used by the
+    /// clone/rename/share/settings flows; the top bar already prompts.
+    pub fn refresh_profiles_guarded(&mut self) {
+        if save_session::is_dirty() {
+            self.unsaved_prompt = Some(PendingTopBarAction::Reload);
+        } else {
+            self.refresh_profiles_and_saves();
+        }
+    }
+
     pub fn select_profile(&mut self, profile_path: String) {
-        self.selected_profile_path = Some(profile_path.clone());
-        let _ = save_last_profile(self.app.clone(), profile_path.clone());
-        let _ = set_active_profile(
+        // AS5: confirm with the backend before committing the UI
+        // selection. Remembering the last profile is best-effort (a
+        // failure warns but does not block the switch); activating the
+        // profile is not — on failure the UI keeps the old selection.
+        if let Err(err) = save_last_profile(self.app.clone(), profile_path.clone()) {
+            self.set_status(format!("Could not remember last profile: {err}"), true);
+        }
+        if let Err(err) = set_active_profile(
             profile_path.clone(),
             self.profile_state(),
             self.decrypt_cache(),
             self.profile_cache(),
-        );
+        ) {
+            self.set_status(format!("Failed to activate profile: {err}"), true);
+            return;
+        }
+        self.selected_profile_path = Some(profile_path.clone());
+        // SW2: the profile (and its save) changed under any switcher session.
+        self.invalidate_switcher_state();
 
         match async_runtime::block_on(find_profile_saves(profile_path.clone())) {
             Ok(saves) => {
@@ -759,26 +858,41 @@ impl Ets2NativeApp {
     }
 
     pub fn select_save(&mut self, save_path: String) {
-        self.selected_save_path = Some(save_path.clone());
+        // AS5: confirm with the backend before committing the UI
+        // selection; on failure the UI keeps the old save.
         if let Some(profile_path) = self.selected_profile_path.clone() {
-            let _ = load_profile(
+            if let Err(err) = load_profile(
                 profile_path,
                 Some(save_path.clone()),
                 self.profile_state(),
                 self.decrypt_cache(),
                 self.profile_cache(),
-            );
+            ) {
+                self.set_status(format!("Failed to load profile for save: {err}"), true);
+                return;
+            }
         }
-        let _ = set_current_save(
-            save_path,
+        if let Err(err) = set_current_save(
+            save_path.clone(),
             self.profile_state(),
             self.decrypt_cache(),
             self.profile_cache(),
-        );
+        ) {
+            self.set_status(format!("Failed to select save: {err}"), true);
+            return;
+        }
+        self.selected_save_path = Some(save_path);
+        // SW2: the save changed under any switcher session.
+        self.invalidate_switcher_state();
         self.reload_active_save_data();
     }
 
     pub fn reload_active_save_data(&mut self) {
+        // C1/C2: the coaches snapshot carries the save hash it was read
+        // with; any reload (flush, switch, discard) may change that
+        // hash, so the snapshot is stale from here on. Clear it — the
+        // Coaches tab and the Save Editor refresh reload it on demand.
+        self.coaches_snapshot = None;
         self.undo_status = get_undo_status(self.profile_state()).ok();
         self.base_config = read_base_config(self.profile_cache()).ok();
         if let Some(cfg) = &self.base_config {
@@ -818,19 +932,32 @@ impl Ets2NativeApp {
         // The XP editors start from the TRUE truck XP (game.sii), not
         // the displayed total (info.sii = truck + bus): using the
         // total as the truck XP would inflate the truck career by the
-        // bus amount on every apply. Fall back to the displayed value
-        // when the truck figure cannot be read.
-        if let Some(truck_xp) = read_truck_xp(self.profile_state()) {
-            self.edit_xp_input = truck_xp;
-        }
-
-        // Keep the Target Level input in sync with the save's current
-        // level (same total XP as the LEVEL tile), so Apply Level
-        // starts as a no-op instead of jumping to the stale default
-        // of 50.
-        if let Some(xp) = self.save_data.as_ref().and_then(|d| d.xp) {
-            self.edit_level_input =
-                crate::xp::command::calculate_level(xp.max(0) as u64).level as i64;
+        // bus amount on every apply. The Target Level input derives
+        // from the same truck XP (L3), so Apply Level starts as a
+        // no-op instead of jumping to the stale default of 50. An
+        // unreadable save is reported instead of silently keeping the
+        // stale value (L8); only a save with no truck XP field at all
+        // falls back to the displayed total for the level input.
+        match try_read_truck_xp(self.profile_state()) {
+            Ok(Some(truck_xp)) => {
+                self.edit_xp_input = truck_xp;
+                self.edit_level_input =
+                    crate::xp::command::calculate_level(truck_xp.max(0) as u64).level as i64;
+            }
+            Ok(None) => {
+                if let Some(xp) = self.save_data.as_ref().and_then(|d| d.xp) {
+                    self.edit_level_input =
+                        crate::xp::command::calculate_level(xp.max(0) as u64).level as i64;
+                }
+            }
+            Err(err) => {
+                // Only report when the save itself loaded: if
+                // read_all_save_data already failed above, its "Save
+                // read notice" covers this.
+                if self.save_data.is_some() {
+                    self.set_status(format!("Truck XP unreadable: {err}"), true);
+                }
+            }
         }
 
         if let Ok(qs) = async_runtime::block_on(quicksave_game_info(
@@ -921,6 +1048,14 @@ impl Ets2NativeApp {
     fn drain_background_events(&mut self) {
         while let Ok(ev) = self.event_rx.try_recv() {
             let summary = ev.payload.to_string();
+            // NT4: plugin install failures arrive on the event bus;
+            // surface them as toasts instead of letting them vanish
+            // into the activity log. (The payload is a JSON string, so
+            // prefer its unquoted form.)
+            if ev.event == "career://plugin_install_error" {
+                let detail = ev.payload.as_str().unwrap_or(summary.as_str());
+                self.set_status(format!("Plugin install failed: {detail}"), true);
+            }
             if self.recent_events.len() >= 50 {
                 self.recent_events.pop_front();
             }
@@ -992,9 +1127,20 @@ impl Ets2NativeApp {
                         old_game: previous_game,
                     });
                 } else {
-                    self.selected_profile_path = None;
-                    self.selected_save_path = None;
-                    self.refresh_profiles_and_saves();
+                    // AS5: confirm with the backend before committing
+                    // the UI switch; on failure revert to the previous
+                    // game (the ComboBox already mutated the field).
+                    match set_selected_game(self.selected_game.clone(), self.profile_state()) {
+                        Ok(_) => {
+                            self.selected_profile_path = None;
+                            self.selected_save_path = None;
+                            self.refresh_profiles_and_saves();
+                        }
+                        Err(err) => {
+                            self.selected_game = previous_game;
+                            self.set_status(format!("Failed to switch game: {err}"), true);
+                        }
+                    }
                 }
             }
 
@@ -1154,7 +1300,10 @@ impl Ets2NativeApp {
                 self.flush_pending_changes();
             }
 
-            // Language Selector
+            // Language indicator (U2): the interface is hardcoded
+            // English, so the old selector changed nothing visible.
+            // It no longer offers a choice; the saved preference
+            // still applies to backend messages.
             if !self.available_languages.is_empty() {
                 ui.separator();
                 ui.label(
@@ -1163,27 +1312,14 @@ impl Ets2NativeApp {
                         .strong()
                         .color(theme::FAINT),
                 );
-                let mut next_lang = None;
-                egui::ComboBox::from_id_salt("lang_selector")
-                    .selected_text(self.current_language.to_uppercase())
-                    .width(65.0)
-                    .show_ui(ui, |ui| {
-                        for lang in &self.available_languages {
-                            let label = format!("{} ({})", lang.name, lang.code.to_uppercase());
-                            if ui
-                                .selectable_label(self.current_language == lang.code, label)
-                                .clicked()
-                            {
-                                next_lang = Some(lang.code.clone());
-                            }
-                        }
-                    });
-                if let Some(code) = next_lang {
-                    if let Ok(msg) = set_language_command(self.app.clone(), code.clone()) {
-                        self.current_language = code;
-                        self.set_status(msg, false);
-                    }
-                }
+                ui.label(
+                    RichText::new(self.current_language.to_uppercase())
+                        .size(11.0)
+                        .color(theme::MUTED),
+                )
+                .on_hover_text(
+                    "The interface is English only for now; this is the saved language preference.",
+                );
             }
         });
     }
@@ -1306,9 +1442,15 @@ impl Ets2NativeApp {
                 );
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // U1: same semantics as the top-bar Reload — prompt
+                // first when staged edits exist.
                 if components::primary_button(ui, "Reload Session").clicked() {
-                    self.refresh_profiles_and_saves();
-                    self.set_status("Profiles and active save reloaded.", false);
+                    if save_session::is_dirty() {
+                        self.unsaved_prompt = Some(PendingTopBarAction::Reload);
+                    } else {
+                        self.refresh_profiles_and_saves();
+                        self.set_status("Profiles and active save reloaded.", false);
+                    }
                 }
             });
         });
@@ -1578,23 +1720,46 @@ impl Ets2NativeApp {
                 }
             }
             if ui.button("Max All Skills").clicked() {
-                for key in ["adr", "long_dist", "heavy", "fragile", "urgent", "mechanical"] {
-                    let _ = edit_skill_value(
+                // S1/S4: ADR maxes at 63, the other five skills at 6;
+                // surface per-skill failures instead of silently
+                // continuing and claiming success.
+                let mut failures: Vec<String> = Vec::new();
+                for (key, max) in [
+                    ("adr", 63),
+                    ("long_dist", 6),
+                    ("heavy", 6),
+                    ("fragile", 6),
+                    ("urgent", 6),
+                    ("mechanical", 6),
+                ] {
+                    if let Err(err) = edit_skill_value(
                         key.to_string(),
-                        6,
+                        max,
                         self.profile_state(),
                         self.profile_cache(),
                         self.decrypt_cache(),
-                    );
+                    ) {
+                        failures.push(format!("{key}: {err}"));
+                    }
                 }
-                self.skill_adr = 6;
+                self.skill_adr = 63;
                 self.skill_long_dist = 6;
                 self.skill_heavy = 6;
                 self.skill_fragile = 6;
                 self.skill_urgent = 6;
                 self.skill_mechanical = 6;
                 self.reload_active_save_data();
-                self.set_status("All 6 skills set to maximum (6).", false);
+                if failures.is_empty() {
+                    self.set_status(
+                        "Staged all skills at maximum (ADR 63, others 6).",
+                        false,
+                    );
+                } else {
+                    self.set_status(
+                        format!("Max All Skills failed for: {}", failures.join("; ")),
+                        true,
+                    );
+                }
             }
             if ui.button("Scan Save Health").clicked() {
                 match async_runtime::block_on(get_active_save_health(
@@ -1611,9 +1776,15 @@ impl Ets2NativeApp {
             }
             if ui.button("Generate Market Jobs").clicked() {
                 match dispatcher_generate_jobs(self.career_state(), self.profile_state()) {
+                    // D10: report the resulting counts — the status
+                    // cannot tell how many jobs this run added.
                     Ok(st) => {
+                        let message = format!(
+                            "Market jobs: {} open ({} generated).",
+                            st.open_total_jobs, st.open_generated_jobs
+                        );
                         self.dispatcher_gen_status = Some(st);
-                        self.set_status("Generated new freight market jobs.", false);
+                        self.set_status(message, false);
                     }
                     Err(e) => self.set_status(e, true),
                 }
@@ -1718,6 +1889,17 @@ impl Ets2NativeApp {
 
 impl eframe::App for Ets2NativeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Exit guard (0.6): closing the window with staged edits used
+        // to lose them silently. Cancel the close and ask what to do
+        // with them instead; the prompt's Exit action carries the close
+        // out afterwards via close_after_prompt.
+        if ctx.input(|i| i.viewport().close_requested()) && save_session::is_dirty() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            if self.unsaved_prompt.is_none() {
+                self.unsaved_prompt = Some(PendingTopBarAction::Exit);
+            }
+        }
+
         self.drain_background_events();
 
         egui::TopBottomPanel::top("native_top_bar")
@@ -1815,5 +1997,10 @@ impl eframe::App for Ets2NativeApp {
             });
 
         self.render_unsaved_prompt(ctx);
+
+        if self.close_after_prompt {
+            self.close_after_prompt = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
     }
 }

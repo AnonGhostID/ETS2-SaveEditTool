@@ -315,7 +315,36 @@ async fn count_rows(pool: &SqlitePool, table: &str) -> Result<i64, String> {
         .map_err(|error| error.to_string())
 }
 
-fn run_runtime_migrations(db_path: &Path) -> Result<(), String> {
+/// Apply one migration file statement by statement. A statement that fails
+/// with "duplicate column name" is skipped: the column already exists (the
+/// migration was partially applied before its tracking row was recorded),
+/// so re-running it must not abort the whole batch (DB2). Any other error
+/// still fails the migration. Splitting on ';' is safe for these files:
+/// none of them contains a semicolon inside a string literal or a trigger.
+fn apply_migration_statements(tx: &rusqlite::Transaction, sql: &str) -> Result<(), String> {
+    for statement in sql.split(';') {
+        let statement = statement.trim();
+        if statement.is_empty() {
+            continue;
+        }
+        if let Err(error) = tx.execute(statement, []) {
+            if error.to_string().contains("duplicate column name") {
+                crate::dev_log!(
+                    "[db] Skipping already-applied column in migration: {}",
+                    error
+                );
+                continue;
+            }
+            return Err(error.to_string());
+        }
+    }
+    Ok(())
+}
+
+/// The single runtime-migration runner for the app database (DB1).
+/// `link_service::create_pool` routes through this function too, so there is
+/// exactly one migration list (`RUNTIME_MIGRATIONS`) shared by every caller.
+pub fn run_runtime_migrations(db_path: &Path) -> Result<(), String> {
     crate::dev_log!("[db] Running runtime migrations for {}", db_path.display());
     let mut connection = RusqliteConnection::open(db_path).map_err(|error| error.to_string())?;
     connection
@@ -324,7 +353,7 @@ fn run_runtime_migrations(db_path: &Path) -> Result<(), String> {
     connection
         .execute_batch(
             r#"
-        PRAGMA foreign_keys = ON;
+        PRAGMA foreign_keys = OFF;
         CREATE TABLE IF NOT EXISTS ets_feature_migrations (
             filename TEXT PRIMARY KEY,
             applied_at_utc TEXT NOT NULL
@@ -332,6 +361,13 @@ fn run_runtime_migrations(db_path: &Path) -> Result<(), String> {
         "#,
         )
         .map_err(|error| error.to_string())?;
+    // NOTE: foreign keys stay OFF for the whole migration run. Some
+    // migrations declare FKs to tables that only exist after migrations
+    // run (users/companies are created by auth/companies ensure_tables),
+    // and SQLite rejects CREATE TABLE with an FK to a missing parent
+    // table when enforcement is on — that would abort every fresh-DB
+    // startup. The FK definitions are still stored and are enforced by
+    // every runtime connection, which enables the pragma itself.
 
     let tx = connection
         .transaction()
@@ -350,7 +386,7 @@ fn run_runtime_migrations(db_path: &Path) -> Result<(), String> {
             continue;
         }
 
-        tx.execute_batch(&sql)
+        apply_migration_statements(&tx, sql)
             .map_err(|error| format!("apply migration {} failed: {}", filename, error))?;
         tx.execute(
             "INSERT INTO ets_feature_migrations (filename, applied_at_utc) VALUES (?1, ?2)",

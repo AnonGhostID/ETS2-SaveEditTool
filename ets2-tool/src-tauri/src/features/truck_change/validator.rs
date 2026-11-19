@@ -70,6 +70,30 @@ pub fn validate_truck_switch_content(
             errors.push("driver_truck_assignment_mismatch".to_string());
         }
 
+        // SW1: the garage slots must agree with the swap. The target
+        // truck must no longer sit in the affected driver's garage
+        // slot, and the driver's new truck — if garaged with a driver
+        // reference — must sit in a slot paired with that driver, not
+        // with anyone else (a null slot driver carries no claim).
+        let target_still_in_driver_slot = parsed
+            .garage_assignments
+            .get(&normalize_sii_unit_id(expected_truck_id))
+            .and_then(|assignment| assignment.driver_id.as_deref())
+            .map(|actual| normalize_sii_unit_id(actual) == normalize_sii_unit_id(driver_id))
+            .unwrap_or(false);
+        if target_still_in_driver_slot {
+            errors.push("driver_garage_slot_not_relocated".to_string());
+        }
+        if let Some(actual) = parsed
+            .garage_assignments
+            .get(&normalize_sii_unit_id(driver_truck_id))
+            .and_then(|assignment| assignment.driver_id.as_deref())
+        {
+            if normalize_sii_unit_id(actual) != normalize_sii_unit_id(driver_id) {
+                errors.push("driver_truck_assignment_mismatch".to_string());
+            }
+        }
+
         let driver_declares_previous_truck = parsed
             .driver_infos
             .get(&normalize_sii_unit_id(driver_id))

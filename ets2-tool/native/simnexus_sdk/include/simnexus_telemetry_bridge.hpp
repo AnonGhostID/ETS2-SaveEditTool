@@ -5,6 +5,9 @@
 namespace simnexus {
 
 inline constexpr wchar_t kSharedMemoryName[] = L"Local\\SimNexusTelemetryV3";
+// NT1: named mutex serializing init/shutdown of the shared-memory mapping
+// across game processes. The in-process SRWLocks cannot do this.
+inline constexpr wchar_t kSharedMemoryMutexName[] = L"Local\\SimNexusTelemetryV3Mutex";
 inline constexpr wchar_t kLegacySharedMemoryName[] = L"Local\\SimNexusTelemetry";
 inline constexpr char kBridgeMagic[8] = {'S', 'N', 'X', 'T', 'L', 'M', '0', '3'};
 inline constexpr std::uint32_t kBridgeProtocolVersion = 3;

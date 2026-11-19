@@ -194,7 +194,11 @@ pub fn process_snapshot(
         active.job_market = job.job_market.clone();
         active.special_job = job.special_job;
         let next_event = job.event.map(to_state_event);
-        if active.last_event != next_event {
+        // D8: a missing event must never clear a latched terminal event
+        // (Delivered/Cancelled). Only a new event replaces the old one;
+        // fresh jobs still get their initial event from the construction
+        // above.
+        if next_event.is_some() && active.last_event != next_event {
             active.last_event = next_event;
             changed = true;
         }
@@ -235,6 +239,31 @@ fn handle_job_inactive(
     Ok(())
 }
 
+/// D7: finalize the in-memory active job when the telemetry reader stops
+/// (game closed / reader shutdown), so a tracked job is not left `active`
+/// forever. Jobs still active when the app itself exits are reconciled on
+/// the next startup by `db::init_logbook`.
+pub fn finalize_active_job(runtime: &CareerRuntime) -> Result<(), String> {
+    let now = Utc::now().to_rfc3339();
+    let mut guard = runtime
+        .active_job
+        .lock()
+        .map_err(|_| "Career active_job lock poisoned".to_string())?;
+
+    if let Some(previous) = guard.take() {
+        crate::dev_log!(
+            "[career] active job ended on telemetry stop: {}",
+            previous.job_id
+        );
+        finalize_job(runtime, &previous, &now)?;
+        runtime
+            .overview_dirty
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    Ok(())
+}
+
 fn open_connection(runtime: &CareerRuntime) -> Result<Connection, String> {
     let db_path = runtime
         .db_path
@@ -243,7 +272,12 @@ fn open_connection(runtime: &CareerRuntime) -> Result<Connection, String> {
         .clone()
         .ok_or_else(|| "Career database path not initialized".to_string())?;
 
-    Connection::open(db_path).map_err(|e| e.to_string())
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|e| e.to_string())?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| e.to_string())?;
+    Ok(conn)
 }
 
 fn upsert_job(runtime: &CareerRuntime, active: &ActiveJobState) -> Result<(), String> {

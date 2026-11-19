@@ -1,7 +1,6 @@
 use rusqlite::Connection;
 use crate::tauri::State;
 use crate::features::auth::db as auth_db;
-use crate::features::auth::service as auth_service;
 use crate::features::vtc::db;
 use crate::features::vtc::models::{
     CareerSettings, CompanyMember, CompanyOverview, CompanyRoleOption, CompanySettings,
@@ -16,10 +15,23 @@ use crate::state::{AppProfileState, AuthState};
 fn open_connection(auth: &AuthState) -> Result<Connection, String> {
     let db_path = auth_db::default_db_path();
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|e| e.to_string())?;
     auth_db::ensure_tables(&conn)?;
     db::ensure_tables(&conn)?;
-    auth_service::seed_default_admin(&conn)?;
     service::ensure_local_company_bootstrap(&conn, auth)?;
+    Ok(conn)
+}
+
+/// Read-only connection for commands that must not mutate state (D12c):
+/// schema setup only (`auth_db::ensure_tables` is pure DDL), no admin
+/// seeding and no company bootstrap.
+fn open_read_connection() -> Result<Connection, String> {
+    let db_path = auth_db::default_db_path();
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|e| e.to_string())?;
+    auth_db::ensure_tables(&conn)?;
     Ok(conn)
 }
 pub fn get_current_user_profile(auth: State<'_, AuthState>) -> Result<UserProfile, String> {
@@ -73,8 +85,7 @@ pub fn update_username(
     service::update_username(&mut conn, auth.inner(), username)
 }
 pub fn check_username_availability(username: String) -> Result<UsernameAvailability, String> {
-    let auth = AuthState::default();
-    let conn = open_connection(&auth)?;
+    let conn = open_read_connection()?;
     service::check_username_availability(&conn, username)
 }
 pub fn update_user_profile_meta(
@@ -130,9 +141,7 @@ pub fn change_member_role(
     service::change_member_role(&conn, auth.inner(), member_id, role_key)
 }
 pub fn get_available_roles() -> Result<Vec<CompanyRoleOption>, String> {
-    let auth = AuthState::default();
-    let conn = open_connection(&auth)?;
-    service::get_available_roles(&conn)
+    Ok(service::get_available_roles_static())
 }
 pub fn get_user_settings(auth: State<'_, AuthState>) -> Result<UserSettings, String> {
     let conn = open_connection(auth.inner())?;

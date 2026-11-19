@@ -75,6 +75,10 @@ pub fn load_overview(runtime: &CareerRuntime) -> Result<CareerOverview, String> 
         .ok_or_else(|| "Career database path not initialized".to_string())?;
 
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|e| e.to_string())?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| e.to_string())?;
     let economy_state = economy::load_state(&conn)?;
     let bank_state = bank::load_state(&conn)?;
     let reputation_state = reputation::load_state(&conn)?;
@@ -234,6 +238,21 @@ fn build_dashboard(
     }
 }
 
+/// D2: trip job_ids and job_log ids come from different subsystems and never
+/// match, so id-based dedup alone double-counts every delivered job. This
+/// route + day key is the fallback identity for the same drive. Entries with
+/// unknown cities ("Unbekannte Stadt") cannot match a trip's real cities and
+/// still double-count; that is a data gap, not a matching bug.
+fn route_day_key(origin: &str, destination: &str, cargo: &str, started_at_utc: &str) -> String {
+    format!(
+        "{}|{}|{}|{}",
+        origin.trim().to_lowercase(),
+        destination.trim().to_lowercase(),
+        cargo.trim().to_lowercase(),
+        started_at_utc.get(..10).unwrap_or("")
+    )
+}
+
 fn load_statistics(
     conn: &Connection,
     bank_state: &bank::BankState,
@@ -242,6 +261,7 @@ fn load_statistics(
     job_log::enrich_job_entries(conn, &mut jobs)?;
 
     let mut seen_job_ids = HashSet::new();
+    let mut seen_routes = HashSet::new();
     let mut total_trips = 0_i64;
     let mut total_kilometers = 0.0_f64;
     let mut total_income = 0_i64;
@@ -256,6 +276,12 @@ fn load_statistics(
         if !job.job_id.trim().is_empty() {
             seen_job_ids.insert(job.job_id.clone());
         }
+        seen_routes.insert(route_day_key(
+            &job.origin_city,
+            &job.destination_city,
+            &job.cargo,
+            &job.started_at_utc,
+        ));
 
         match job.status.as_str() {
             "completed" => {
@@ -279,7 +305,11 @@ fn load_statistics(
                 job_id,
                 COALESCE(distance_km, 0),
                 income,
-                COALESCE(status, 'completed')
+                COALESCE(status, 'completed'),
+                started_at_utc,
+                origin,
+                destination,
+                cargo
             FROM trips
             "#,
         )
@@ -291,15 +321,27 @@ fn load_statistics(
                 row.get::<_, f64>(1)?,
                 row.get::<_, Option<i64>>(2)?,
                 row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, Option<String>>(7)?,
             ))
         })
         .map_err(|e| e.to_string())?;
     for row in rows {
-        let (job_id, distance_km, income, status) = row.map_err(|e| e.to_string())?;
+        let (job_id, distance_km, income, status, started_at_utc, origin, destination, cargo) =
+            row.map_err(|e| e.to_string())?;
         let already_counted = job_id
             .as_deref()
             .map(|value| seen_job_ids.contains(value))
-            .unwrap_or(false);
+            .unwrap_or(false)
+            // D2: same drive, different subsystem id — dedupe by route + day.
+            || seen_routes.contains(&route_day_key(
+                origin.as_deref().unwrap_or(""),
+                destination.as_deref().unwrap_or(""),
+                cargo.as_deref().unwrap_or(""),
+                &started_at_utc,
+            ));
         if already_counted {
             continue;
         }

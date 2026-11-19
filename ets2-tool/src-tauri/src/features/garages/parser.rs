@@ -54,6 +54,13 @@ pub fn parse_ai_driver_management_from_sii(
     let mut drivers = Vec::with_capacity(hired.len());
     for driver_id in &hired {
         let normalized = normalize_reference(driver_id);
+        // G1: the player's own driver is listed in player.drivers but is
+        // not a hireable AI driver — never surface it as a removable
+        // AI driver (dismissing it would detach the player and push
+        // the id into driver_pool).
+        if optional_unique_typed_block(&blocks, "driver_player", driver_id)?.is_some() {
+            continue;
+        }
         let driver_locations = locations.get(&normalized).cloned().unwrap_or_default();
         let (garage, slot) = match driver_locations.as_slice() {
             [] => {

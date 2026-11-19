@@ -181,6 +181,24 @@ pub fn parse_truck_save(content: &str) -> ParsedTruckSave {
     }
 }
 
+/// Net brace count of one line, ignoring braces inside double-quoted
+/// strings (C11: a `{` or `}` in a string value used to shift block
+/// bounds silently). SII values never span lines, so each line is
+/// scanned with a fresh quote state.
+fn brace_delta(line: &str) -> i32 {
+    let mut delta = 0i32;
+    let mut in_string = false;
+    for ch in line.chars() {
+        match ch {
+            '"' => in_string = !in_string,
+            '{' if !in_string => delta += 1,
+            '}' if !in_string => delta -= 1,
+            _ => {}
+        }
+    }
+    delta
+}
+
 pub fn parse_unit_blocks(content: &str) -> Vec<UnitBlock> {
     let header_re = Regex::new(r"^([A-Za-z0-9_]+)\s*:\s*([^\s{]+)\s*\{").expect("valid unit regex");
     let lines = content.lines().collect::<Vec<_>>();
@@ -209,12 +227,10 @@ pub fn parse_unit_blocks(content: &str) -> Vec<UnitBlock> {
 
         let start = index;
         let mut end = index;
-        let mut depth =
-            lines[index].matches('{').count() as i32 - lines[index].matches('}').count() as i32;
+        let mut depth = brace_delta(lines[index]);
         while end + 1 < lines.len() && depth > 0 {
             end += 1;
-            depth += lines[end].matches('{').count() as i32;
-            depth -= lines[end].matches('}').count() as i32;
+            depth += brace_delta(lines[end]);
         }
 
         let raw_block = lines[start..=end].join("\n");
@@ -1434,8 +1450,11 @@ fn build_missing_inventory_item(
         country_code: assignment.and_then(|item| item.country_code.clone()),
         country_display_name: assignment.and_then(|item| item.country_display_name.clone()),
         is_active,
-        is_switchable: true,
-        blocked_reason: None,
+        // SW5: this truck has no parseable vehicle block (dangling
+        // player.trucks reference); keep it visible for diagnosis but
+        // never present it as switchable.
+        is_switchable: false,
+        blocked_reason: Some("target_vehicle_block_missing".to_string()),
         requires_driver_swap: false,
         engine_data_path: graph.and_then(graph_engine_data_path),
         transmission_data_path: graph.and_then(graph_transmission_data_path),
@@ -1884,7 +1903,11 @@ vehicle_accessory : _nameless.acc.5 {
             .iter()
             .find(|truck| truck.truck_id == "_nameless.truck.missing")
             .unwrap();
-        assert!(missing.is_switchable);
+        assert!(!missing.is_switchable);
+        assert_eq!(
+            missing.blocked_reason.as_deref(),
+            Some("target_vehicle_block_missing")
+        );
         assert_eq!(missing.garage_display_name, None);
         assert_eq!(missing.assigned_driver_id, None);
     }

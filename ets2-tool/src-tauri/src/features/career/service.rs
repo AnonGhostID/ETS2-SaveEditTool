@@ -104,6 +104,13 @@ pub fn start_background(app: AppHandle, runtime: Arc<CareerRuntime>) {
                                                 "[career] plugin auto-install failed for ETS2: {}",
                                                 error
                                             );
+                                            // NT4: surface the failure on
+                                            // the event bus instead of
+                                            // log-only.
+                                            let _ = app.emit(
+                                                "career://plugin_install_error",
+                                                format!("ETS2: {}", error),
+                                            );
                                         }
                                     }
                                     plugin_installer::plugin_file_installed(scs_game)
@@ -123,6 +130,13 @@ pub fn start_background(app: AppHandle, runtime: Arc<CareerRuntime>) {
                                             crate::dev_log!(
                                                 "[career] plugin auto-install failed for ATS: {}",
                                                 error
+                                            );
+                                            // NT4: surface the failure on
+                                            // the event bus instead of
+                                            // log-only.
+                                            let _ = app.emit(
+                                                "career://plugin_install_error",
+                                                format!("ATS: {}", error),
                                             );
                                         }
                                     }
@@ -210,6 +224,8 @@ pub fn start_background(app: AppHandle, runtime: Arc<CareerRuntime>) {
                 if let Some(db_path) = db_path {
                     match Connection::open(&db_path) {
                         Ok(conn) => {
+                            let _ = conn.execute_batch("PRAGMA foreign_keys = ON;");
+                            let _ = conn.busy_timeout(Duration::from_secs(5));
                             let profile_state = app.state::<AppProfileState>();
                             let save_context = snapshot_save_context(profile_state.inner())
                                 .unwrap_or_else(|_| dispatcher::DispatcherSaveContext::default());

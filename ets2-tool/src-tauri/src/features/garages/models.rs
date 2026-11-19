@@ -172,6 +172,12 @@ pub struct GarageRelinquishEmptyResult {
     pub operation: GarageBulkOperation,
     pub relinquished_garage_ids: Vec<String>,
     pub relinquished_count: usize,
+    /// Owned garages that look empty by the loose rule (no drivers, no
+    /// trucks) but were not sold because they are the headquarters,
+    /// hold trailers, or have trailer slots (G4/G5: the UI count and
+    /// the backend count disagree without this).
+    #[serde(default)]
+    pub skipped_garage_ids: Vec<String>,
     pub backup_id: Option<String>,
     pub backup_created: bool,
     pub verified: bool,

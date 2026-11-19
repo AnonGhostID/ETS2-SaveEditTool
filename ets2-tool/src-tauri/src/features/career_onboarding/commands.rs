@@ -10,6 +10,10 @@ pub fn career_get_onboarding_state(
 ) -> Result<CareerOnboardingState, String> {
     let db_path = auth_db::default_db_path();
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|e| e.to_string())?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| e.to_string())?;
     auth_db::ensure_tables(&conn)?;
     company_db::ensure_tables(&conn)?;
     auth_service::seed_default_admin(&conn)?;

@@ -7,11 +7,11 @@ use crate::features::ets2save::models::{
 };
 use crate::features::ets2save::parser::{
     UnitRange, extract_field_value, extract_in_game_time, find_company_block,
-    find_job_offer_data_block, find_player_block_range, parse_job_info_data,
-    parse_player_job_state, patch_job_offer_data, sii_token,
+    find_job_offer_data_block, find_player_block_range, line_matches_unit_token,
+    parse_job_info_data, parse_player_job_state, patch_job_offer_data, sii_token,
 };
 use crate::features::ets2save::post_write_validator::{select_offer_slot, validate_written_job};
-use crate::features::ets2save::sii_codec::{decode_sii_lines, write_lines_atomic};
+use crate::features::ets2save::sii_codec::{decode_sii_lines, write_lines_atomic, write_would_stage};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +23,10 @@ pub struct InjectionPointers {
     pub offer_slot_index: usize,
     pub offer_slots: Vec<PostWriteOfferSlotScan>,
     pub validation: PostWriteValidationResult,
+    /// R5: true when the patch was staged in memory (explicit-save staging)
+    /// instead of written to disk. Callers must not report the write as
+    /// applied to the save file while this is true.
+    pub staged: bool,
 }
 
 pub fn build_offer_patch(
@@ -145,6 +149,7 @@ pub fn write_job_offer_patch(
         offer_slot_index,
         offer_slots,
         validation,
+        staged: write_would_stage(save_path),
     })
 }
 
@@ -364,7 +369,7 @@ fn find_unit_range_with_prefix(lines: &[String], prefix: &str) -> Option<UnitRan
     let mut start_index = None;
     let mut depth = 0_i32;
     for (index, line) in lines.iter().enumerate() {
-        if start_index.is_none() && line.trim().starts_with(prefix) {
+        if start_index.is_none() && line_matches_unit_token(line, prefix) {
             start_index = Some(index);
         }
 

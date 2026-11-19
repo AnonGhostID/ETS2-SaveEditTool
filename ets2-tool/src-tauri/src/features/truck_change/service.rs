@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use crate::features::backup::service as backup_service;
 use crate::features::vehicles::resolve_active_save_from_snapshot;
 use crate::models::trucks::ParsedTruck;
-use crate::shared::decrypt::decrypt_cached_with_cache;
+use crate::shared::decrypt::{decrypt_cached_with_cache, decrypt_from_disk};
 use crate::shared::paths::game_sii_from_save;
 use crate::shared::sii_parser::parse_trucks_from_sii;
 use crate::shared::user_log;
@@ -29,7 +29,8 @@ use super::parser::{
 };
 use super::validator::validate_truck_switch_content;
 use super::writer::{
-    TemporaryRollbackSnapshot, set_unit_field_value, unit_field_exists, write_verified_content,
+    TemporaryRollbackSnapshot, set_unit_array_value, set_unit_field_value, unit_field_exists,
+    write_verified_content,
 };
 
 const TRUCK_CHANGE_FEATURE_STATUS: &str = "WiP/Beta";
@@ -320,7 +321,7 @@ pub fn list_owned_trucks_for_switch_from_content(
 
     TruckSwitchList {
         save_path: save_path.display().to_string(),
-        file_hash: sha256_hex(content.as_bytes()),
+        file_hash: disk_save_hash(save_path, content),
         active_truck_id: parsed.active_truck_id.clone(),
         trucks,
         diagnostics: parsed.diagnostics,
@@ -334,10 +335,19 @@ pub fn initialize_truck_change_session_from_content(
     content: &str,
     session_cache: &TruckChangeSessionCache,
 ) -> Result<TruckChangeSession, String> {
-    let file_hash = sha256_hex(content.as_bytes());
-    if let Some(entry) = session_cache.get(profile_id, save_path, &file_hash) {
-        crate::dev_log!("[truck_change] current truck cache hit");
-        return Ok(session_from_cache_entry(save_path, file_hash, entry));
+    let file_hash = disk_save_hash(save_path, content);
+    // 0.4: the cache is keyed by the disk hash, so it is only
+    // trustworthy when the working copy matches disk. With staged edits
+    // pending, the cached session may describe different content (e.g.
+    // the pre-switch truck after a staged switch), so bypass the cache
+    // and recompute — and do not store the staged-state session under
+    // the disk hash, or a later Discard would serve it as current.
+    let cache_usable = sha256_hex(content.as_bytes()) == file_hash;
+    if cache_usable {
+        if let Some(entry) = session_cache.get(profile_id, save_path, &file_hash) {
+            crate::dev_log!("[truck_change] current truck cache hit");
+            return Ok(session_from_cache_entry(save_path, file_hash, entry));
+        }
     }
 
     let list = list_owned_trucks_for_switch_from_content(save_path, content);
@@ -358,13 +368,15 @@ pub fn initialize_truck_change_session_from_content(
         warnings: list.warnings,
     };
 
-    session_cache.store(CurrentTruckCacheEntry::from_session(
-        profile_id.to_string(),
-        save_path.to_path_buf(),
-        &session,
-    ));
-    crate::dev_log!("[truck_change] current truck cached");
-    crate::dev_log!("[truck_change] owned trucks cached");
+    if cache_usable {
+        session_cache.store(CurrentTruckCacheEntry::from_session(
+            profile_id.to_string(),
+            save_path.to_path_buf(),
+            &session,
+        ));
+        crate::dev_log!("[truck_change] current truck cached");
+        crate::dev_log!("[truck_change] owned trucks cached");
+    }
     Ok(session)
 }
 
@@ -375,7 +387,7 @@ pub fn preview_active_truck_switch_from_content(
     expected_file_hash: &str,
 ) -> TruckChangePreview {
     let parsed = parse_truck_save(content);
-    let actual_hash = sha256_hex(content.as_bytes());
+    let actual_hash = disk_save_hash(save_path, content);
     let current_pointer = resolve_current_truck_pointer(&parsed).ok();
     let current_truck = current_pointer
         .as_ref()
@@ -451,6 +463,32 @@ pub fn preview_active_truck_switch_from_content(
         }
     }
 
+    // SW4: never silently rewire an external/online job to another truck.
+    if let Some(pointer) = current_pointer.as_ref() {
+        if let Some(player_id) = parsed.player_id.as_deref() {
+            if unsupported_player_job(content, player_id, &pointer.truck_id) {
+                warnings.push("active_external_job".to_string());
+                can_apply = false;
+            }
+        }
+    }
+
+    // SW1: a driver swap whose garage slots cannot be relocated
+    // unambiguously must not be offered as applicable.
+    if mode == TruckSwitchMode::DriverSwap {
+        if let Some(pointer) = current_pointer.as_ref() {
+            if let Err(reason) =
+                resolve_driver_swap_garage_plan(&parsed, &pointer.truck_id, target_truck_id)
+            {
+                // No garage slot on either side: nothing to relocate.
+                if reason != "missing_garage_slot" {
+                    warnings.push(reason.to_string());
+                    can_apply = false;
+                }
+            }
+        }
+    }
+
     let _ = save_path;
     warnings.sort();
     warnings.dedup();
@@ -500,7 +538,7 @@ pub fn apply_active_truck_switch_transaction(
     let game_path = resolve_game_sii_path(save_path_arg, profile_state)?;
     decrypt_cache.invalidate_path(&game_path);
     let content = decrypt_cached_with_cache(&game_path, decrypt_cache)?;
-    let actual_hash = sha256_hex(content.as_bytes());
+    let actual_hash = disk_save_hash(&game_path, &content);
     if actual_hash != expected_file_hash {
         return Err("save_changed_since_preview".to_string());
     }
@@ -775,7 +813,7 @@ pub fn apply_active_truck_switch_transaction(
             ],
         );
 
-        let file_hash_after = sha256_hex(reloaded.as_bytes());
+        let file_hash_after = disk_save_hash(&game_path, &reloaded);
         let refreshed_session = initialize_truck_change_session_from_content(
             &profile_id,
             &game_path,
@@ -971,8 +1009,27 @@ pub fn apply_switch_to_content(
             dangling.join(",")
         ));
     }
+    // SW4: never silently rewire an external/online job to another truck.
+    if let Some(player_id) = parsed.player_id.as_deref() {
+        if unsupported_player_job(content, player_id, &previous_truck_id) {
+            return Err("active_external_job".to_string());
+        }
+    }
     let switch_plan = resolve_truck_switch_write_plan(&parsed, &current_pointer, target_truck_id)
         .map_err(|reason| reason.to_string())?;
+    // SW1: for a driver swap, resolve the garage relocation up front
+    // so an ambiguous slot layout fails the swap instead of leaving
+    // the target truck in the driver's garage slot while player-active.
+    let garage_plan = if switch_plan.target_driver.is_some() {
+        match resolve_driver_swap_garage_plan(&parsed, &previous_truck_id, target_truck_id) {
+            Ok(plan) => Some(plan),
+            // No garage slot on either side: nothing to relocate.
+            Err("missing_garage_slot") => None,
+            Err(reason) => return Err(reason.to_string()),
+        }
+    } else {
+        None
+    };
     crate::dev_log!(
         "[truck_change] apply stage=writer current_assignment_unit_found={} assigned_vehicles_id={}",
         switch_plan.assigned_vehicles_unit_found,
@@ -1064,6 +1121,18 @@ pub fn apply_switch_to_content(
         updated = next;
         affected_driver_id = Some(target_driver.driver_id.clone());
         driver_received_truck_id = Some(previous_truck_id.clone());
+    }
+
+    // SW1: move the garage slots with the swap — the driver's slot
+    // takes the previous truck and the previous truck's slot takes the
+    // target truck, so no truck ends up in two places at once.
+    if let Some(garage_plan) = garage_plan.as_ref() {
+        updated = apply_driver_swap_garage_plan(
+            &updated,
+            garage_plan,
+            &previous_truck_id,
+            target_truck_id,
+        )?;
     }
 
     if let Some(player_id) = parsed.player_id.as_deref() {
@@ -1260,6 +1329,7 @@ fn preview_error_code(warnings: &[String]) -> String {
         "driver_swap_assignment_missing",
         "duplicate_assignment_detected",
         "dangling_vehicle_references",
+        "active_external_job",
     ];
     PRIORITY
         .iter()
@@ -1890,6 +1960,14 @@ fn annotate_truck_switchability(
         }
 
         let context = inspect_truck_assignment_context(parsed, &truck.truck_id);
+        // SW5: a truck with no vehicle block can never be switched to,
+        // even if a driver block points at it — never re-enable it as
+        // a (driver-swap) candidate.
+        if !context.vehicle_unit_found {
+            truck.is_switchable = false;
+            truck.blocked_reason = Some("target_vehicle_block_missing".to_string());
+            continue;
+        }
         match context.assignment_kind {
             TruckAssignmentKind::UnassignedOwnedTruck => {
                 truck.requires_driver_swap = false;
@@ -2406,7 +2484,17 @@ fn resolve_driver_swap_garage_plan(
     let previous_context = inspect_truck_assignment_context(parsed, previous_truck_id);
     let target_context = inspect_truck_assignment_context(parsed, target_truck_id);
 
-    if target_context.assignment_kind != TruckAssignmentKind::AiDriverAssigned {
+    // A garage-slot driver_ref that disagrees with the truck's assigned
+    // driver does not make the SLOT ambiguous: the plan relocates
+    // vehicles between slots and never touches the drivers arrays, so a
+    // conflicting driver reference is a diagnostic, not a blocker. (The
+    // specific checks below still enforce one driver and at most one
+    // slot per side.)
+    let target_conflict_only = target_context.assignment_kind == TruckAssignmentKind::Ambiguous
+        && target_context.unsafe_reason.as_deref() == Some("conflicting_driver_refs");
+    if target_context.assignment_kind != TruckAssignmentKind::AiDriverAssigned
+        && !target_conflict_only
+    {
         return Err(match target_context.assignment_kind {
             TruckAssignmentKind::Ambiguous => "ambiguous_garage_slots",
             TruckAssignmentKind::Unknown => match target_context.unsafe_reason.as_deref() {
@@ -2463,6 +2551,55 @@ fn resolve_driver_swap_garage_plan(
 fn garage_slot_matches(left: &GarageSlotAssignment, right: &TruckGarageSlotReference) -> bool {
     normalize_sii_unit_id(&left.garage_id) == normalize_sii_unit_id(&right.garage_id)
         && left.slot_index == right.slot_index
+}
+
+/// SW1: apply a resolved driver-swap garage plan. The driver's garage
+/// slot takes the previous truck (their new truck) and the previous
+/// truck's garage slot takes the target truck (the player's new truck);
+/// the drivers arrays are untouched — the driver stays in their slot.
+/// Either side may be absent (a truck with no garage slot), in which
+/// case only the present side is updated.
+fn apply_driver_swap_garage_plan(
+    content: &str,
+    plan: &DriverSwapGaragePlan,
+    previous_truck_id: &str,
+    target_truck_id: &str,
+) -> Result<String, String> {
+    if let (Some(target_slot), Some(previous_slot)) =
+        (plan.target_slot.as_ref(), plan.previous_slot.as_ref())
+    {
+        if garage_slot_matches(&previous_slot.assignment, target_slot) {
+            return Err("ambiguous_garage_slots".to_string());
+        }
+    }
+    let mut updated = content.to_string();
+    if let Some(target_slot) = plan.target_slot.as_ref() {
+        let (next, changed) = set_unit_array_value(
+            &updated,
+            &target_slot.garage_id,
+            "vehicles",
+            target_slot.slot_index,
+            previous_truck_id,
+        )?;
+        if !changed {
+            return Err("driver_swap_garage_slot_unresolved".to_string());
+        }
+        updated = next;
+    }
+    if let Some(previous_slot) = plan.previous_slot.as_ref() {
+        let (next, changed) = set_unit_array_value(
+            &updated,
+            &previous_slot.assignment.garage_id,
+            "vehicles",
+            previous_slot.assignment.slot_index,
+            target_truck_id,
+        )?;
+        if !changed {
+            return Err("driver_swap_garage_slot_unresolved".to_string());
+        }
+        updated = next;
+    }
+    Ok(updated)
 }
 
 fn resolve_previous_driver_slot(
@@ -2709,6 +2846,22 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
+}
+
+/// 0.4: the optimistic-lock hash must be computed from the decrypted
+/// bytes on disk, not the staged working copy, so it agrees with the
+/// coaches/garages guards (which hash `decrypt_from_disk`). Staged
+/// edits in other tabs must not trip `save_changed_since_preview`.
+/// Raw bytes are not hashed: after a top-bar Save the file becomes
+/// plaintext while the logical content is unchanged, so raw hashing
+/// would invalidate the session on every Save. Falls back to the
+/// working-copy hash when the file cannot be read from disk (e.g.
+/// synthetic test paths).
+fn disk_save_hash(save_path: &Path, content: &str) -> String {
+    match decrypt_from_disk(save_path) {
+        Ok(disk_content) => sha256_hex(disk_content.as_bytes()),
+        Err(_) => sha256_hex(content.as_bytes()),
+    }
 }
 
 #[cfg(test)]

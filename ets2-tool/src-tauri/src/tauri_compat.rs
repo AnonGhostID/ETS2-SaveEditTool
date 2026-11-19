@@ -63,11 +63,15 @@ impl PathResolver {
     }
 
     pub fn resource_dir(&self) -> Result<PathBuf, String> {
+        // Prefer the executable directory unconditionally (BD2): a
+        // distributed binary may ship without sibling locales/ or
+        // resources/, and resolving to the exe dir keeps lookups sane
+        // (the translator falls back to raw keys when no locales are
+        // found). The compile-time manifest dir stays only as a dev
+        // fallback for runs where current_exe cannot be resolved.
         if let Ok(exe) = std::env::current_exe() {
             if let Some(parent) = exe.parent() {
-                if parent.join("locales").is_dir() || parent.join("resources").is_dir() {
-                    return Ok(parent.to_path_buf());
-                }
+                return Ok(parent.to_path_buf());
             }
         }
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

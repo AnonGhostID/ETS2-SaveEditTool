@@ -25,17 +25,10 @@ pub fn profile_rename(
         return Err("profile.sii nicht gefunden".into());
     }
 
-    // 3. Decrypt & Read
-    let content = decrypt_if_needed(&profile_sii).map_err(|e| e.to_string())?;
-
-    // 4. Replace Name in Content
-    let new_content = change_profile_name_in_sii(&content, &new_name)?;
-
-    // 5. Write back profile.sii
-    fs::write(&profile_sii, new_content)
-        .map_err(|e| format!("Fehler beim Schreiben von profile.sii: {}", e))?;
-
-    // 6. Rename Folder (Input Text -> Hex)
+    // 3. Compute the target folder and check for conflicts BEFORE writing
+    // anything (P4): the old order wrote profile.sii first, so renaming
+    // to an already-used hex folder left the old folder's profile.sii
+    // claiming the new name even though the rename was refused.
     let parent = profile_path.parent().ok_or("Kein Elternordner gefunden")?;
     let new_dir_name = text_to_hex(&new_name);
     let new_profile_path = parent.join(&new_dir_name);
@@ -47,13 +40,41 @@ pub fn profile_rename(
         ));
     }
 
+    // 4. Decrypt & Read
+    let content = decrypt_if_needed(&profile_sii).map_err(|e| e.to_string())?;
+
+    // 5. Replace Name in Content
+    let new_content = change_profile_name_in_sii(&content, &new_name)?;
+
+    // 6. Write back profile.sii
+    fs::write(&profile_sii, new_content)
+        .map_err(|e| format!("Fehler beim Schreiben von profile.sii: {}", e))?;
+
+    // 7. Rename Folder (Input Text -> Hex)
     if new_profile_path != profile_path {
         fs::rename(profile_path, &new_profile_path)
             .map_err(|e| format!("Fehler beim Umbenennen des Ordners: {}", e))?;
 
-        // 7. Update State with new path
+        // 8. Update State with new path
         *profile_state.current_profile.lock().unwrap() =
             Some(new_profile_path.to_string_lossy().to_string());
+
+        // P4: the current save lives under the profile folder, so it
+        // must move with the rename instead of pointing at the old path
+        // until a full re-selection. Best-effort: a poisoned lock must
+        // not fail a rename that already succeeded.
+        if let Ok(mut current_save) = profile_state.current_save.lock() {
+            if let Some(save) = current_save.as_ref() {
+                if let Ok(relative) = Path::new(save).strip_prefix(profile_path) {
+                    *current_save = Some(
+                        new_profile_path
+                            .join(relative)
+                            .to_string_lossy()
+                            .to_string(),
+                    );
+                }
+            }
+        }
 
         dev_log!(
             "Profil erfolgreich umbenannt nach: {}",
@@ -73,7 +94,10 @@ fn change_profile_name_in_sii(content: &str, new_name: &str) -> Result<String, S
         let trimmed = line.trim_start();
         if trimmed.starts_with("profile_name:") {
             // Replace the line with the new name
-            result.push_str(&format!(" profile_name: \"{}\"", new_name));
+            result.push_str(&format!(
+                " profile_name: \"{}\"",
+                escape_sii_string(new_name)
+            ));
             found = true;
         } else {
             result.push_str(line);
@@ -85,4 +109,20 @@ fn change_profile_name_in_sii(content: &str, new_name: &str) -> Result<String, S
         return Err("Konnte 'profile_name' in profile.sii nicht finden.".into());
     }
     Ok(result)
+}
+
+/// P9: escape a user-supplied value before interpolating it into a
+/// quoted SII string, so `"`, `\` or a newline in the name cannot break
+/// out of the value and corrupt the file.
+fn escape_sii_string(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\r' | '\n' => escaped.push(' '),
+            other => escaped.push(other),
+        }
+    }
+    escaped
 }

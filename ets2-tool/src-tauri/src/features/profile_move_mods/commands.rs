@@ -1,4 +1,5 @@
 use crate::dev_log;
+use crate::features::backup::service as backup_service;
 use crate::shared::current_profile::require_current_profile;
 use crate::shared::decrypt::decrypt_if_needed;
 use crate::state::AppProfileState;
@@ -10,7 +11,7 @@ pub fn copy_mods_to_profile(
     profile_state: crate::tauri::State<'_, AppProfileState>,
 ) -> Result<String, String> {
     // 1. Get current profile path (Source)
-    let source_path_str = require_current_profile(profile_state)?;
+    let source_path_str = require_current_profile(profile_state.clone())?;
     let source_path = Path::new(&source_path_str);
 
     if !source_path.exists() {
@@ -46,6 +47,14 @@ pub fn copy_mods_to_profile(
     let mods = extract_mods(&source_content);
     dev_log!("Gefundene Mods im Quellprofil: {}", mods.len());
 
+    // P8: copying from an empty source would wipe the target's mod list
+    // and report success ("0 Mods übertragen"). Refuse instead.
+    if mods.is_empty() {
+        return Err(
+            "Quellprofil enthält keine Mods; das Zielprofil wurde nicht verändert.".into(),
+        );
+    }
+
     // 5. Find profile.sii in Target
     let target_sii = target_path.join("profile.sii");
     if !target_sii.exists() {
@@ -58,7 +67,21 @@ pub fn copy_mods_to_profile(
     // 7. Inject Mods into Target Content
     let new_target_content = inject_mods(&target_content, &mods)?;
 
-    // 8. Write back to Target
+    // 8. Back up the target before overwriting it (P8), so a bad
+    // transfer can be rolled back. A failed backup aborts the copy.
+    backup_service::create_backup_for_targets(
+        profile_state.inner(),
+        "before mod transfer",
+        std::slice::from_ref(&target_sii),
+    )
+    .map_err(|error| {
+        format!(
+            "Mod-Transfer abgebrochen: Sicherheits-Backup fehlgeschlagen ({}).",
+            error
+        )
+    })?;
+
+    // 9. Write back to Target
     fs::write(&target_sii, new_target_content)
         .map_err(|e| format!("Fehler beim Schreiben von profile.sii: {}", e))?;
 

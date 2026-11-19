@@ -3,7 +3,8 @@ use std::path::Path;
 use crate::features::ets2save::errors::{AppError, AppErrorCode};
 use crate::features::ets2save::models::{PostWriteOfferSlotScan, PostWriteValidationResult};
 use crate::features::ets2save::parser::{
-    UnitRange, extract_field_value, find_job_offer_data_block, list_job_offer_pointers, sii_token,
+    UnitRange, extract_field_value, find_job_offer_data_block, line_matches_unit_token,
+    list_job_offer_pointers, sii_token,
 };
 use crate::features::ets2save::sii_codec::decode_sii_lines;
 
@@ -255,7 +256,7 @@ fn find_unit_range(lines: &[String], token: &str) -> Option<UnitRange> {
     let mut depth = 0_i32;
 
     for (index, line) in lines.iter().enumerate() {
-        if start_index.is_none() && line.trim().starts_with(token) {
+        if start_index.is_none() && line_matches_unit_token(line, token) {
             start_index = Some(index);
         }
 

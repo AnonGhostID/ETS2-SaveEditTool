@@ -15,3 +15,9 @@ node_modules/
 
 **/logs/archive/application-*.txt
 **/logs/archive/emergency-*.txt
+
+# Runtime SQLite databases must never be committed: a committed copy can seed
+# dev/self-built runs via the legacy-DB migration (fresh DBs are created when
+# absent). Applies to both the repo data dir and the crate data dir.
+ets2-tool/data/app.sqlite*
+ets2-tool/src-tauri/data/app.sqlite*

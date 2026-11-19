@@ -129,6 +129,14 @@ pub struct CoachesSnapshot {
     pub total_bus_reward: i64,
     pub total_bus_distance: f64,
     pub total_bus_passengers: i64,
+    /// Authoritative career totals from the economy unit (C8). The
+    /// `total_bus_*` fields above are sums over the parsed job log;
+    /// these are the game's own counters and are what the "Jobs
+    /// Completed" / distance / passenger figures should show when
+    /// present. None on saves that predate the bus stat fields.
+    pub finished_job_count: Option<i64>,
+    pub total_distance_km: Option<f64>,
+    pub total_passengers_count: Option<i64>,
     pub warnings: Vec<String>,
 }
 
@@ -157,11 +165,44 @@ fn resolve<'a>(blocks: &'a [UnitBlock], id: &str) -> Option<&'a UnitBlock> {
     matches.next().is_none().then_some(found)
 }
 
+/// 14.3: index of normalized unit id -> the unit, or None when the id
+/// is ambiguous (two units normalize to the same id). `resolve` scans
+/// all ~22k blocks and normalizes every id on every call, and a
+/// snapshot resolves hundreds of stops/entries, which made Coaches
+/// loading quadratic. The index preserves `resolve`'s exact semantics
+/// (unique match or None) while normalizing each id once.
+fn build_block_index<'a>(
+    blocks: &'a [UnitBlock],
+) -> std::collections::HashMap<String, Option<&'a UnitBlock>> {
+    let mut index = std::collections::HashMap::new();
+    for block in blocks {
+        index
+            .entry(normalize_sii_unit_id(&block.id))
+            .and_modify(|slot| *slot = None)
+            .or_insert(Some(block));
+    }
+    index
+}
+
+fn resolve_indexed<'a>(
+    index: &std::collections::HashMap<String, Option<&'a UnitBlock>>,
+    id: &str,
+) -> Option<&'a UnitBlock> {
+    index.get(&normalize_sii_unit_id(id)).copied().flatten()
+}
+
 fn xp(unit: &UnitBlock, field: &str) -> Option<i64> {
     extract_field_value(&unit.raw_block, field)?
         .parse::<i64>()
         .ok()
         .filter(|value| *value >= 0)
+}
+
+fn stat_f64(unit: &UnitBlock, field: &str) -> Option<f64> {
+    extract_field_value(&unit.raw_block, field)?
+        .parse::<f64>()
+        .ok()
+        .filter(|value| *value >= 0.0)
 }
 
 /// SII quoted strings arrive with their quotes ("city.wien"); strip one pair.
@@ -192,9 +233,10 @@ pub fn career_xp_from_content(content: &str) -> (Option<i64>, Option<i64>) {
 
 pub fn read_snapshot(content: &str) -> Result<CoachesSnapshot, String> {
     let blocks = parse_unit_blocks(content);
+    let block_index = build_block_index(&blocks);
     let economy = unique_unit(&blocks, "economy")?;
     let player = match extract_field_value(&economy.raw_block, "player") {
-        Some(id) => resolve(&blocks, &id).filter(|unit| unit.unit_type == "player"),
+        Some(id) => resolve_indexed(&block_index, &id).filter(|unit| unit.unit_type == "player"),
         None => unique_unit(&blocks, "player").ok(),
     };
     let player_field = |field| player.and_then(|unit| extract_field_value(&unit.raw_block, field));
@@ -224,7 +266,7 @@ pub fn read_snapshot(content: &str) -> Result<CoachesSnapshot, String> {
                 warnings.push("coaches.stop_array_invalid".to_string());
                 return None;
             }
-            let stop = resolve(&blocks, &id).filter(|unit| unit.unit_type == "bus_stop");
+            let stop = resolve_indexed(&block_index, &id).filter(|unit| unit.unit_type == "bus_stop");
             let discovered = stop
                 .and_then(|unit| extract_field_value(&unit.raw_block, "discovered"))
                 .and_then(|value| match value.as_str() {
@@ -257,7 +299,7 @@ pub fn read_snapshot(content: &str) -> Result<CoachesSnapshot, String> {
     let bus_references = bus_entries
         .into_iter()
         .map(|(_, id)| {
-            let resolved = resolve(&blocks, &id).is_some();
+            let resolved = resolve_indexed(&block_index, &id).is_some();
             BusStop {
                 id,
                 resolved,
@@ -269,38 +311,61 @@ pub fn read_snapshot(content: &str) -> Result<CoachesSnapshot, String> {
     let current_bus_job_resolved = current_bus_job
         .as_deref()
         .filter(|value| !is_null_ref(value))
-        .and_then(|id| resolve(&blocks, id))
+        .and_then(|id| resolve_indexed(&block_index, id))
         .is_some();
-    let job_logs = blocks
-        .iter()
-        .filter(|unit| unit.unit_type == "bus_job_log")
+    // C9: prefer the log the economy unit points at; only fall back to
+    // scanning every bus_job_log unit when the pointer is missing or
+    // does not resolve (older saves / synthetic fixtures). Summing all
+    // logs double-counts when an orphaned or historical log exists.
+    let pointed_log = extract_field_value(&economy.raw_block, "bus_job_log")
+        .and_then(|id| resolve_indexed(&block_index, &id))
+        .filter(|unit| unit.unit_type == "bus_job_log");
+    let log_units: Vec<&UnitBlock> = match pointed_log {
+        Some(unit) => vec![unit],
+        None => blocks
+            .iter()
+            .filter(|unit| unit.unit_type == "bus_job_log")
+            .collect(),
+    };
+    let mut seen_entry_ids = std::collections::HashSet::new();
+    let job_logs = log_units
+        .into_iter()
         .map(|unit| {
-            let entries_detail = extract_array_entries(&unit.raw_block, "entries")
-                .into_iter()
-                .filter_map(|(_, id)| {
-                    let entry = resolve(&blocks, &id)?;
-                    if entry.unit_type != "bus_job_log_entry" {
-                        return None;
-                    }
-                    let field = |name: &str| extract_field_value(&entry.raw_block, name);
-                    let text = |name: &str| field(name).map(|value| unquote(&value).to_string());
-                    Some(BusJobEntry {
-                        id,
-                        job_type: text("type"),
-                        assigned_bus: text("assigned_bus"),
-                        source_stop: text("source_bus_stop_name"),
-                        target_stop: text("target_bus_stop_name"),
-                        stage_count: field("stage_count").and_then(|v| v.parse().ok()),
-                        exp_delta: field("exp_delta").and_then(|v| v.parse().ok()),
-                        reward: field("reward").and_then(|v| v.parse().ok()),
-                        travelled_distance: field("travelled_distance")
-                            .and_then(|v| v.parse().ok()),
-                        start_time: field("start_time").and_then(|v| v.parse().ok()),
-                        end_time: field("end_time").and_then(|v| v.parse().ok()),
-                        total_passengers: field("total_passengers").and_then(|v| v.parse().ok()),
-                    })
-                })
-                .collect::<Vec<_>>();
+            let mut entries_detail = Vec::new();
+            for (_, id) in extract_array_entries(&unit.raw_block, "entries") {
+                // C9: the same entry referenced by two logs is one job.
+                if !seen_entry_ids.insert(normalize_sii_unit_id(&id)) {
+                    continue;
+                }
+                // C6: an entry that cannot be resolved, or is not a
+                // bus_job_log_entry at all, used to vanish silently
+                // (a real save's log points at accessory_hookup_data
+                // units). Warn instead of dropping without a trace.
+                let Some(entry) = resolve_indexed(&block_index, &id) else {
+                    warnings.push("coaches.job_entry_dropped".to_string());
+                    continue;
+                };
+                if entry.unit_type != "bus_job_log_entry" {
+                    warnings.push("coaches.job_entry_dropped".to_string());
+                    continue;
+                }
+                let field = |name: &str| extract_field_value(&entry.raw_block, name);
+                let text = |name: &str| field(name).map(|value| unquote(&value).to_string());
+                entries_detail.push(BusJobEntry {
+                    id,
+                    job_type: text("type"),
+                    assigned_bus: text("assigned_bus"),
+                    source_stop: text("source_bus_stop_name"),
+                    target_stop: text("target_bus_stop_name"),
+                    stage_count: field("stage_count").and_then(|v| v.parse().ok()),
+                    exp_delta: field("exp_delta").and_then(|v| v.parse().ok()),
+                    reward: field("reward").and_then(|v| v.parse().ok()),
+                    travelled_distance: field("travelled_distance").and_then(|v| v.parse().ok()),
+                    start_time: field("start_time").and_then(|v| v.parse().ok()),
+                    end_time: field("end_time").and_then(|v| v.parse().ok()),
+                    total_passengers: field("total_passengers").and_then(|v| v.parse().ok()),
+                });
+            }
             BusJobLog {
                 id: unit.id.clone(),
                 version: extract_field_value(&unit.raw_block, "version"),
@@ -354,6 +419,9 @@ pub fn read_snapshot(content: &str) -> Result<CoachesSnapshot, String> {
         total_bus_reward,
         total_bus_distance,
         total_bus_passengers,
+        finished_job_count: xp(economy, "bus_finished_job_count"),
+        total_distance_km: stat_f64(economy, "bus_total_distance"),
+        total_passengers_count: xp(economy, "bus_total_passengers"),
         warnings,
     })
 }
@@ -400,4 +468,41 @@ pub fn verify_xp(content: &str, career: Career, expected: i64) -> Result<(), Str
         return Err("coaches.verify_failed".to_string());
     }
     Ok(())
+}
+
+/// Patch any single numeric field of the economy unit (player skills:
+/// `adr`, `long_dist`, ...). Same structural approach as `patch_xp`:
+/// the field must exist exactly once inside the economy block, so an
+/// AI driver's same-named field can never be hit (S2). The caller
+/// validates the value's range.
+pub fn patch_economy_field(content: &str, field: &str, value: i64) -> Result<String, String> {
+    let blocks = parse_unit_blocks(content);
+    let economy = unique_unit(&blocks, "economy")?;
+    let occurrences = economy
+        .raw_block
+        .lines()
+        .filter(|line| line.trim_start().starts_with(&format!("{field}:")))
+        .count();
+    if occurrences == 0 {
+        return Err("coaches.field_missing".to_string());
+    }
+    if occurrences != 1 {
+        return Err("coaches.field_invalid".to_string());
+    }
+    let (mut updated, changed) =
+        set_unit_field_value(content, &economy.id, field, &value.to_string())?;
+    if !changed {
+        return Err("coaches.field_missing".to_string());
+    }
+    // Preserve the original CRLF convention after the existing line-based writer.
+    if content.contains("\r\n") && !content.replace("\r\n", "").contains('\n') {
+        updated = updated.replace('\n', "\r\n");
+    }
+    let blocks = parse_unit_blocks(&updated);
+    let economy = unique_unit(&blocks, "economy")?;
+    let expected = value.to_string();
+    if extract_field_value(&economy.raw_block, field).as_deref() != Some(expected.as_str()) {
+        return Err("coaches.verify_failed".to_string());
+    }
+    Ok(updated)
 }

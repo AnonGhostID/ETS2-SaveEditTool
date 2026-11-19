@@ -527,9 +527,24 @@ pub fn analyze_resolved_save_health(
         }
     }
 
-    let xp_main = capture_number(&save_content, r"(?m)^\s*experience_points:\s*(\d+)");
-    let xp_info = capture_number(&save_content, r"info_players_experience:\s*(\d+)");
-    let level_info = capture_number(&save_content, r"info_player_level:\s*(\d+)");
+    // H1: the info.* fields live in info.sii, not game.sii — searching
+    // game.sii for them could never match, so these checks never fired.
+    // info.sii stores the TOTAL (truck + bus) XP under the app's model,
+    // so compare against the total from game.sii, not the truck figure
+    // alone (comparing truck XP to the total would false-positive on
+    // every save with bus XP).
+    let truck_xp = capture_number(&save_content, r"(?m)^\s*experience_points:\s*(\d+)");
+    let bus_xp =
+        capture_number(&save_content, r"(?m)^\s*bus_experience_points:\s*(\d+)").unwrap_or(0);
+    let xp_main = truck_xp.map(|value| value.saturating_add(bus_xp));
+    let info_path = save_path.with_file_name("info.sii");
+    let info_content = decrypt_cached_with_cache(&info_path, decrypt_cache).ok();
+    let xp_info = info_content
+        .as_deref()
+        .and_then(|content| capture_number(content, r"info_players_experience:\s*(\d+)"));
+    let level_info = info_content
+        .as_deref()
+        .and_then(|content| capture_number(content, r"info_player_level:\s*(\d+)"));
     let derived_level = xp_main.or(xp_info).map(level_from_xp);
 
     if xp_main.is_some() && xp_info.is_some() && xp_main != xp_info {
@@ -538,12 +553,12 @@ pub fn analyze_resolved_save_health(
             "warning",
             "progression",
             "XP metadata is inconsistent",
-            "The player XP stored in the main save block does not match the info summary value.",
+            "The total player XP (truck + bus) stored in the main save block does not match the info summary value.",
             "Apply the safe fix to synchronize the info summary with the main player XP value.",
             true,
             Some(FIX_SYNC_PLAYER_XP_LEVEL.to_string()),
             vec![
-                format!("experience_points={}", xp_main.unwrap_or_default()),
+                format!("total_experience_points={}", xp_main.unwrap_or_default()),
                 format!("info_players_experience={}", xp_info.unwrap_or_default()),
             ],
         ));
@@ -629,16 +644,46 @@ fn apply_sync_player_xp_level_fix(
         .ok_or_else(|| "No active save was available for the safe fix.".to_string())?;
     let save_path = game_sii_from_save(Path::new(&save_reference));
     let content = decrypt_if_needed(&save_path)?;
-    let xp_main = capture_number(&content, r"(?m)^\s*experience_points:\s*(\d+)")
-        .or_else(|| capture_number(&content, r"info_players_experience:\s*(\d+)"))
+    let truck_xp = capture_number(&content, r"(?m)^\s*experience_points:\s*(\d+)")
         .ok_or_else(|| "The player XP fields could not be found in the active save.".to_string())?;
-    let derived_level = level_from_xp(xp_main);
+    // info.sii stores the TOTAL (truck + bus) XP under the app's model.
+    let bus_xp =
+        capture_number(&content, r"(?m)^\s*bus_experience_points:\s*(\d+)").unwrap_or(0);
+    let xp_total = truck_xp.saturating_add(bus_xp);
+    let derived_level = level_from_xp(xp_total);
+
+    // H2: the info.* fields live in info.sii, not game.sii. Rewriting
+    // game.sii was a no-op (both regexes matched nothing) that still
+    // staged an identical file and reported applied: true. Operate on
+    // info.sii, and report applied: false when nothing needs changing.
+    let info_path = save_path.with_file_name("info.sii");
+    let info_content = decrypt_if_needed(&info_path)?;
+    let xp_re = Regex::new(r"info_players_experience:\s*\d+").map_err(|error| error.to_string())?;
+    let level_re = Regex::new(r"info_player_level:\s*\d+").map_err(|error| error.to_string())?;
+    let new_content = level_re
+        .replace(
+            &xp_re.replace(
+                &info_content,
+                format!("info_players_experience: {}", xp_total),
+            ),
+            format!("info_player_level: {}", derived_level),
+        )
+        .to_string();
+
+    if new_content == info_content {
+        return Ok(SaveHealthFixResultDto {
+            fix_id: FIX_SYNC_PLAYER_XP_LEVEL.to_string(),
+            applied: false,
+            message: "XP and level metadata were already in sync; nothing was changed."
+                .to_string(),
+        });
+    }
 
     // Explicit-save staging: no backup at stage time; the flush creates
     // the one backup that matters.
     let staged = save_session::is_staging_enabled();
     if !staged {
-        let backup_targets = backup_service::recommended_targets(&save_path);
+        let backup_targets = backup_service::recommended_targets(&info_path);
         backup_service::create_backup_for_targets(
             profile_state,
             "before health fix sync player xp/level",
@@ -646,21 +691,12 @@ fn apply_sync_player_xp_level_fix(
         )?;
     }
 
-    let xp_re = Regex::new(r"info_players_experience:\s*\d+").map_err(|error| error.to_string())?;
-    let level_re = Regex::new(r"info_player_level:\s*\d+").map_err(|error| error.to_string())?;
-    let new_content = level_re
-        .replace(
-            &xp_re.replace(&content, format!("info_players_experience: {}", xp_main)),
-            format!("info_player_level: {}", derived_level),
-        )
-        .to_string();
-
     if staged {
-        save_session::stage_save(&save_path, &new_content);
+        save_session::stage_save(&info_path, &new_content);
     } else {
-        fs::write(&save_path, new_content.as_bytes()).map_err(|error| error.to_string())?;
+        fs::write(&info_path, new_content.as_bytes()).map_err(|error| error.to_string())?;
     }
-    decrypt_cache.invalidate_path(&save_path);
+    decrypt_cache.invalidate_path(&info_path);
     profile_cache.invalidate_save_data();
     profile_cache.invalidate_vehicle_data();
 
@@ -673,7 +709,7 @@ fn apply_sync_player_xp_level_fix(
     context
         .extra
         .insert("fixId".to_string(), FIX_SYNC_PLAYER_XP_LEVEL.to_string());
-    context.extra.insert("xp".to_string(), xp_main.to_string());
+    context.extra.insert("xp".to_string(), xp_total.to_string());
     context
         .extra
         .insert("level".to_string(), derived_level.to_string());

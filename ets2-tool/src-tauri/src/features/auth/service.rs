@@ -22,7 +22,8 @@ const DEFAULT_REMEMBER_DAYS: i64 = 30;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PersistedSession {
-    token: String,
+    // Only the hash of the bearer token is ever written to disk (AS3).
+    token_hash: String,
 }
 
 pub fn validate_email(email: &str) -> Result<(), String> {
@@ -89,13 +90,15 @@ fn record_login_event(conn: &Connection, user_id: i64) -> Result<(), String> {
 }
 
 pub fn seed_default_admin(conn: &Connection) -> Result<(), String> {
+    // Seed the default admin only when no admin account exists at all, and
+    // never touch an existing account. In particular a changed admin
+    // password must never be silently reset back to the default (AS1).
+    if repo::any_admin_exists(conn)? {
+        return Ok(());
+    }
+
     let admin_email = "admin@admin.de";
-    let existing = repo::find_user_by_email(conn, admin_email)?;
-    if let Some(existing) = existing {
-        if existing.is_seed {
-            let password_hash = hash_password("admin123")?;
-            repo::update_user_password_hash(conn, existing.id, &password_hash)?;
-        }
+    if repo::find_user_by_email(conn, admin_email)?.is_some() {
         return Ok(());
     }
 
@@ -221,13 +224,15 @@ pub fn logout_local(auth: &AuthState) -> Result<(), String> {
     }
 
     if let Some(session) = previous_session {
-        if let Some(token) = session.token {
-            let db_path = db::default_db_path();
-            let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
-            db::ensure_tables(&conn)?;
-            let now = now_rfc3339();
-            repo::revoke_session_by_token(&conn, &token, &now)?;
-        }
+        let db_path = db::default_db_path();
+        let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+        conn.execute_batch("PRAGMA foreign_keys = ON;")
+            .map_err(|e| e.to_string())?;
+        db::ensure_tables(&conn)?;
+        let now = now_rfc3339();
+        // Logout revokes the whole session family for the user, not just
+        // the current token (AS3).
+        repo::revoke_all_sessions_for_user(&conn, session.user_id, &now)?;
     }
 
     let session_path = db::auth_session_path();
@@ -258,20 +263,35 @@ pub fn restore_persisted_session(conn: &Connection, auth: &AuthState) -> Result<
         return Ok(());
     }
 
-    let payload: PersistedSession =
-        serde_json::from_str(&fs::read_to_string(&session_path).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
+    // A stale or unreadable session file is deleted instead of kept around:
+    // that covers files written by older versions, which stored the raw
+    // token and no longer parse (AS3).
+    let payload: PersistedSession = match fs::read_to_string(&session_path)
+        .map_err(|e| e.to_string())
+        .and_then(|text| {
+            serde_json::from_str::<PersistedSession>(&text).map_err(|e| e.to_string())
+        }) {
+        Ok(payload) => payload,
+        Err(_) => {
+            let _ = fs::remove_file(&session_path);
+            return Ok(());
+        }
+    };
 
     let (session_id, user_id, expires_at, _last_used_at) =
-        match repo::find_session_by_token(conn, &payload.token)? {
+        match repo::find_session_by_token_hash(conn, &payload.token_hash)? {
             Some(value) => value,
-            None => return Ok(()),
+            None => {
+                let _ = fs::remove_file(&session_path);
+                return Ok(());
+            }
         };
 
     let expires = chrono::DateTime::parse_from_rfc3339(&expires_at)
         .map_err(|e| e.to_string())?
         .with_timezone(&chrono::Utc);
     if chrono::Utc::now() > expires {
+        let _ = fs::remove_file(&session_path);
         return Ok(());
     }
 
@@ -283,10 +303,12 @@ pub fn restore_persisted_session(conn: &Connection, auth: &AuthState) -> Result<
             .session
             .lock()
             .map_err(|_| "AuthState session lock poisoned".to_string())?;
+        // The raw bearer token is not stored on disk, so a restored
+        // session carries no in-memory token either (AS3).
         *guard = Some(AuthSession {
             user_id,
             remember_me: true,
-            token: Some(payload.token),
+            token: None,
             expires_at: Some(expires_at),
         });
     }
@@ -338,7 +360,9 @@ fn set_logged_in_user(
         let session_path = db::auth_session_path();
         db::ensure_parent_dir(&session_path)?;
         let persisted = PersistedSession {
-            token: token.clone().ok_or_else(|| "Token missing".to_string())?,
+            token_hash: repo::hash_session_token(
+                token.as_deref().ok_or_else(|| "Token missing".to_string())?,
+            ),
         };
         fs::write(
             &session_path,
@@ -346,6 +370,10 @@ fn set_logged_in_user(
         )
         .map_err(|e| e.to_string())?;
     } else {
+        // Logging in without remember-me must not leave older persisted
+        // sessions usable: revoke the whole session family (AS3).
+        let now = now_rfc3339();
+        repo::revoke_all_sessions_for_user(conn, user.id, &now)?;
         let session_path = db::auth_session_path();
         if session_path.exists() {
             fs::remove_file(&session_path).map_err(|e| e.to_string())?;

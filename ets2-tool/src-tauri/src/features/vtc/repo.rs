@@ -112,6 +112,22 @@ pub fn upsert_vtc_company_member(
     user_id: i64,
     role: &str,
 ) -> Result<(), String> {
+    // DB5: vtc_company_members.company_id references vtc_companies(id),
+    // so the mirror row must exist before the member row. Mirror the
+    // authoritative company first (idempotent upsert); a member of a
+    // company that does not exist is rejected instead of violating the
+    // foreign key.
+    let company = load_company_overview(conn, company_id)?
+        .ok_or_else(|| "company_not_found".to_string())?;
+    upsert_vtc_company(
+        conn,
+        company.id,
+        &company.name,
+        &company.created_at,
+        &company.updated_at,
+        "local_only",
+        None,
+    )?;
     conn.execute(
         r#"
         INSERT INTO vtc_company_members (company_id, user_id, role)
@@ -552,6 +568,22 @@ pub fn load_company_overview(
     .map_err(|e| e.to_string())
 }
 
+/// D12a: resolve a nullable company field. `None` keeps the current
+/// value; `Some("")` clears it to NULL; anything else replaces it.
+fn resolve_nullable_field(input: &Option<String>, current: Option<String>) -> Option<String> {
+    match input {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        None => current,
+    }
+}
+
 pub fn update_company_profile(
     conn: &Connection,
     company_id: i64,
@@ -573,17 +605,14 @@ pub fn update_company_profile(
         .unwrap_or(current.location)
         .trim()
         .to_string();
-    let language = input.language.clone().or(current.language);
-    let game = input
-        .game
-        .clone()
-        .or(current.game)
-        .map(|value| value.to_uppercase());
-    let description = input.description.clone().or(current.description);
-    let logo_path = input.logo_path.clone().or(current.logo_path);
-    let header_path = input.header_path.clone().or(current.header_path);
-    let slogan = input.slogan.clone().or(current.slogan);
-    let accent_color = input.accent_color.clone().or(current.accent_color);
+    let language = resolve_nullable_field(&input.language, current.language);
+    let game =
+        resolve_nullable_field(&input.game, current.game).map(|value| value.to_uppercase());
+    let description = resolve_nullable_field(&input.description, current.description);
+    let logo_path = resolve_nullable_field(&input.logo_path, current.logo_path);
+    let header_path = resolve_nullable_field(&input.header_path, current.header_path);
+    let slogan = resolve_nullable_field(&input.slogan, current.slogan);
+    let accent_color = resolve_nullable_field(&input.accent_color, current.accent_color);
     let public_visibility = input.public_visibility.unwrap_or(current.public_visibility);
 
     conn.execute(

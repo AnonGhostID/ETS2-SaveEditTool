@@ -189,10 +189,17 @@ fn render_dispatcher(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
     ui.horizontal_wrapped(|ui| {
         if ui.button("⚡ Generate Market Jobs").clicked() {
             match dispatcher_generate_jobs(app.career_state(), app.profile_state()) {
+                // D10: report the resulting counts — the status cannot
+                // tell how many jobs this run added, so do not claim
+                // new jobs were generated.
                 Ok(st) => {
+                    let message = format!(
+                        "Market jobs: {} open ({} generated).",
+                        st.open_total_jobs, st.open_generated_jobs
+                    );
                     app.dispatcher_gen_status = Some(st);
                     refresh_career_data(app);
-                    app.set_status("Generated new freight market jobs.", false);
+                    app.set_status(message, false);
                 }
                 Err(e) => app.set_status(e, true),
             }
@@ -204,10 +211,15 @@ fn render_dispatcher(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                 app.career_state(),
                 app.profile_state(),
             ) {
+                // D10: see above.
                 Ok(st) => {
+                    let message = format!(
+                        "Market jobs: {} open ({} generated).",
+                        st.open_total_jobs, st.open_generated_jobs
+                    );
                     app.dispatcher_gen_status = Some(st);
                     refresh_career_data(app);
-                    app.set_status("Generated universal jobs synced to save context.", false);
+                    app.set_status(message, false);
                 }
                 Err(e) => app.set_status(e, true),
             }
@@ -230,10 +242,14 @@ fn render_dispatcher(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             }
         }
         if ui.button("Cleanup Expired Jobs").clicked() {
-            if let Ok(st) = dispatcher_cleanup_expired_jobs(app.career_state(), app.profile_state())
-            {
-                app.dispatcher_gen_status = Some(st);
-                refresh_career_data(app);
+            // D10: a failed cleanup was silently ignored.
+            match dispatcher_cleanup_expired_jobs(app.career_state(), app.profile_state()) {
+                Ok(st) => {
+                    app.dispatcher_gen_status = Some(st);
+                    refresh_career_data(app);
+                    app.set_status("Ran expired-job cleanup.", false);
+                }
+                Err(e) => app.set_status(format!("Cleanup failed: {e}"), true),
             }
         }
     });
@@ -471,27 +487,52 @@ fn render_job_detail(
                     app.profile_state(),
                     app.ets_db_state(),
                 )) {
+                    // D15: with staging on, the write lands in memory
+                    // only — report staged vs written honestly, and do
+                    // not claim success when nothing was applied.
                     Ok(dto) => {
                         refresh_career_data(app);
-                        app.set_status(
-                            format!(
-                                "Job {} written to quicksave (applied={}).",
-                                dto.job.job.id, dto.write_applied
-                            ),
-                            false,
-                        );
+                        if dto.write_applied
+                            && crate::shared::save_session::is_staging_enabled()
+                        {
+                            app.set_status(
+                                format!(
+                                    "Job {} staged in quicksave — press Save in the top bar to write it to disk.",
+                                    dto.job.job.id
+                                ),
+                                false,
+                            );
+                        } else if dto.write_applied {
+                            app.set_status(
+                                format!("Job {} written to quicksave.", dto.job.job.id),
+                                false,
+                            );
+                        } else {
+                            app.set_status(
+                                format!(
+                                    "Job {} was NOT written to quicksave (status: {}).",
+                                    dto.job.job.id, dto.dispatcher_status
+                                ),
+                                true,
+                            );
+                        }
                     }
                     Err(e) => app.set_status(format!("Write to quicksave failed: {e}"), true),
                 }
             }
             if ui.button("Cancel Job").clicked() {
-                let _ = dispatcher_cancel_job(
+                // D10: report a failed cancel instead of claiming success.
+                match dispatcher_cancel_job(
                     job_id.clone(),
                     app.career_state(),
                     app.profile_state(),
-                );
-                refresh_career_data(app);
-                app.set_status(format!("Cancelled job {job_id}."), false);
+                ) {
+                    Ok(_) => {
+                        refresh_career_data(app);
+                        app.set_status(format!("Cancelled job {job_id}."), false);
+                    }
+                    Err(e) => app.set_status(format!("Cancel failed: {e}"), true),
+                }
             }
         });
     });
@@ -532,9 +573,18 @@ fn render_logbook_and_analytics(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                 app.career_state(),
                 app.profile_state(),
             ) {
-                Ok(_res) => {
+                // D10: report what the scan actually found instead of
+                // a blanket success.
+                Ok(res) => {
                     refresh_career_data(app);
-                    app.set_status("Scanned profile job history into SQLite analytics.", false);
+                    let mut message = format!(
+                        "Scanned {} save(s): {} jobs detected, {} inserted, {} updated.",
+                        res.scanned_saves, res.detected_jobs, res.inserted_jobs, res.updated_jobs
+                    );
+                    if !res.note.trim().is_empty() {
+                        message.push_str(&format!(" {}", res.note.trim()));
+                    }
+                    app.set_status(message, false);
                 }
                 Err(e) => app.set_status(e, true),
             }

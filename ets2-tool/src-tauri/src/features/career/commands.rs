@@ -29,6 +29,8 @@ use crate::features::ets2save::link_service;
 use crate::features::ets2save::models::{
     EtsJobLink, EtsJobLinkStatus, EtsJobWriteResult, PostWriteValidationResult,
 };
+use crate::features::ets2save::parser;
+use crate::features::ets2save::post_write_validator;
 use crate::features::hub::events::CareerStatus;
 use crate::shared::current_profile::snapshot_save_context;
 use crate::state::{AppProfileState, CareerRuntime, CareerState, EtsDbState};
@@ -195,6 +197,10 @@ pub fn career_get_job_log(career: State<'_, CareerState>) -> Result<Vec<JobLogEn
         .ok_or_else(|| "Career database path not initialized".to_string())?;
 
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|e| e.to_string())?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| e.to_string())?;
     job_log::ensure_tables(&conn)?;
     let mut jobs = job_log::list_recent_jobs(&conn, 200)?;
     job_log::enrich_job_entries(&conn, &mut jobs)?;
@@ -211,6 +217,10 @@ pub fn career_get_job_stats(career: State<'_, CareerState>) -> Result<JobStats, 
         .ok_or_else(|| "Career database path not initialized".to_string())?;
 
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|e| e.to_string())?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| e.to_string())?;
     job_log::ensure_tables(&conn)?;
     job_log::load_job_stats(&conn)
 }
@@ -588,7 +598,12 @@ fn open_connection(runtime: &CareerRuntime) -> Result<Connection, String> {
         .clone()
         .ok_or_else(|| "Career database path not initialized".to_string())?;
 
-    Connection::open(db_path).map_err(|e| e.to_string())
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|e| e.to_string())?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| e.to_string())?;
+    Ok(conn)
 }
 
 fn resolve_dispatcher_save_context(
@@ -606,6 +621,96 @@ fn resolve_required_dispatcher_save_context(
         Ok(save_context)
     } else {
         Err("no_active_save".to_string())
+    }
+}
+
+/// D4: whether a link still targets the profile's current quicksave slot.
+/// A link prepared for another profile (or a recreated quicksave slot) must
+/// not be trusted as prepared for this save: the write would land in the
+/// wrong slot, or the UI would report `already_written` for a job that is
+/// not in this quicksave at all. Returns false when the slot cannot be
+/// resolved, in which case the caller keeps the old behavior and the write
+/// path surfaces any real error.
+async fn link_targets_other_quicksave(
+    db_pool: &SqlitePool,
+    profile: &AppProfileState,
+    save_context: &dispatcher::DispatcherSaveContext,
+    link: &EtsJobLink,
+) -> bool {
+    match link_service::ets_get_last_quicksave(
+        db_pool,
+        save_context.profile_reference.as_deref().unwrap_or_default(),
+        profile,
+    )
+    .await
+    {
+        Ok(slot) => slot.save_id != link.save_id,
+        Err(error) => {
+            crate::dev_log!(
+                "[career] could not resolve current quicksave for link {}: {}",
+                link.link_id,
+                format_ets_app_error(&error)
+            );
+            false
+        }
+    }
+}
+
+/// D4: whether the offer a RequiresLoad link points at is still in the
+/// current quicksave. A reverted quicksave (older in-game save loaded)
+/// drops the offer while the link still claims it is written; reporting
+/// `already_written` in that state lies to the user. Returns true when the
+/// offer is missing (a re-write is needed), false when it is present or
+/// when the quicksave cannot be resolved or read.
+async fn requires_load_offer_missing(
+    db_pool: &SqlitePool,
+    profile: &AppProfileState,
+    save_context: &dispatcher::DispatcherSaveContext,
+    link: &EtsJobLink,
+) -> bool {
+    let Some(offer_pointer) = link.offer_pointer.as_deref() else {
+        // No pointer recorded: nothing to validate against. The re-write
+        // re-selects a slot, so treat the offer as missing.
+        return true;
+    };
+    let slot = match link_service::ets_get_last_quicksave(
+        db_pool,
+        save_context.profile_reference.as_deref().unwrap_or_default(),
+        profile,
+    )
+    .await
+    {
+        Ok(slot) => slot,
+        Err(error) => {
+            crate::dev_log!(
+                "[career] could not resolve current quicksave for link {}: {}",
+                link.link_id,
+                format_ets_app_error(&error)
+            );
+            return false;
+        }
+    };
+    let expected_company = format!(
+        "company.volatile.{}.{}",
+        parser::sii_token(&link.src_company),
+        parser::sii_token(&link.src_city)
+    );
+    match post_write_validator::validate_written_job(
+        std::path::Path::new(&slot.game_sii_path),
+        &expected_company,
+        offer_pointer,
+        &link.patch.cargo,
+        &link.patch.target,
+    ) {
+        Ok(validation) => !validation.valid,
+        Err(error) => {
+            crate::dev_log!(
+                "[career] could not validate offer for link {}: {}",
+                link.link_id,
+                format_ets_app_error(&error)
+            );
+            false
+        }
     }
 }
 
@@ -660,6 +765,16 @@ async fn dispatcher_assign_and_prepare_ets_link_inner(
                 | EtsJobLinkStatus::Synced
                 | EtsJobLinkStatus::Completed
         ) {
+            // D4: don't report a link prepared for another save's
+            // quicksave as prepared for this one.
+            if link_targets_other_quicksave(db_pool, profile, &save_context, &link).await {
+                let message = format!(
+                    "dispatcher_link_wrong_save: Link {} was prepared for a different save's quicksave",
+                    link.link_id
+                );
+                emit_assign_prepare_error(app, job_id, &message);
+                return Err(message);
+            }
             let details = load_dispatcher_job_details_for_context(runtime, job_id, &save_context)
                 .unwrap_or(assigned_or_current);
             emit_dispatcher_job_updated(app, &details);
@@ -829,10 +944,29 @@ async fn dispatcher_assign_prepare_write_inner(
             message
         })?;
 
+        // D4: a link prepared for another save's quicksave must not be
+        // trusted here: the write would land in the wrong slot, or the UI
+        // would report `already_written` for a job that is not in this
+        // quicksave at all. Re-prepare is blocked by link_service while a
+        // non-terminal link exists, so the honest behavior is an error
+        // until a re-prepare path exists there.
+        if link_targets_other_quicksave(db_pool, profile, &save_context, &current_link).await {
+            let message = format!(
+                "dispatcher_link_wrong_save: Link {} was prepared for a different save's quicksave and cannot be written here",
+                current_link.link_id
+            );
+            emit_dispatcher_job_error(app, job_id, "write", &message);
+            return Err(message);
+        }
+
+        // D4: a link that claims RequiresLoad is only "already written" if
+        // its offer is still in the current quicksave; a reverted
+        // quicksave needs a re-write instead of a stale success report.
+        let requires_rewrite = matches!(current_link.status, EtsJobLinkStatus::RequiresLoad)
+            && requires_load_offer_missing(db_pool, profile, &save_context, &current_link).await;
+
         match current_link.status {
-            EtsJobLinkStatus::RequiresLoad
-            | EtsJobLinkStatus::Synced
-            | EtsJobLinkStatus::Completed => {
+            EtsJobLinkStatus::Synced | EtsJobLinkStatus::Completed => {
                 emit_dispatcher_progress(
                     app,
                     EVT_DISPATCHER_WRITE_PROGRESS,
@@ -841,7 +975,18 @@ async fn dispatcher_assign_prepare_write_inner(
                 );
                 write_result = "already_written".to_string();
             }
-            EtsJobLinkStatus::Prepared | EtsJobLinkStatus::Written => {
+            EtsJobLinkStatus::RequiresLoad if !requires_rewrite => {
+                emit_dispatcher_progress(
+                    app,
+                    EVT_DISPATCHER_WRITE_PROGRESS,
+                    job_id,
+                    "already_written",
+                );
+                write_result = "already_written".to_string();
+            }
+            EtsJobLinkStatus::Prepared
+            | EtsJobLinkStatus::Written
+            | EtsJobLinkStatus::RequiresLoad => {
                 match link_service::write_job_to_quicksave(app, db_pool, &current_link.link_id)
                     .await
                 {

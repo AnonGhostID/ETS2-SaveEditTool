@@ -8,7 +8,5 @@ pub mod logbook;
 pub mod overlay;
 pub mod overview;
 pub mod plugin_installer;
-pub mod scs_sdk_telemetry;
 pub mod service;
 pub mod telemetry;
-pub mod telemetry_debug;

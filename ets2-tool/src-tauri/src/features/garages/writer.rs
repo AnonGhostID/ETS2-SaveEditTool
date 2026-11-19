@@ -300,6 +300,10 @@ pub fn apply_ai_driver_generation(
 
     let mut changed_garages = HashSet::new();
     let mut consumed_trucks = HashSet::new();
+    // G2: track the truck each new driver ends up with, so the
+    // driver_ai.assigned_truck linkage matches the garage slot.
+    let mut driver_truck_assignments: Vec<(String, Option<String>)> =
+        Vec::with_capacity(selected.len());
     for (offset, driver_id) in selected.iter().enumerate() {
         let slot_index = target_slots[offset];
         if assign_trucks {
@@ -336,6 +340,15 @@ pub fn apply_ai_driver_generation(
             .ok_or_else(|| format!("garage_not_found:{garage_id}"))?
             .drivers[slot_index] = driver_id.clone();
         changed_garages.insert(garage_id.to_string());
+        let slot_truck = garages
+            .get(garage_id)
+            .and_then(|garage| garage.vehicles.get(slot_index))
+            .cloned()
+            .unwrap_or_default();
+        driver_truck_assignments.push((
+            driver_id.clone(),
+            (!is_null_ref(&slot_truck)).then_some(slot_truck),
+        ));
         offers.retain(|value| !value.eq_ignore_ascii_case(driver_id));
         pool.retain(|value| !value.eq_ignore_ascii_case(driver_id));
         hired.push(driver_id.clone());
@@ -356,6 +369,7 @@ pub fn apply_ai_driver_generation(
         &garages,
         &changed_garages,
         selected,
+        &driver_truck_assignments,
     )
 }
 
@@ -365,6 +379,11 @@ pub fn apply_ai_driver_truck_update(
     truck_id: Option<&str>,
 ) -> Result<AiDriverWritePlan, String> {
     let blocks = parse_unit_blocks(content);
+    // G1: the player's own driver is not a managed AI driver — refuse
+    // to reassign its truck even if a stale caller passes its id.
+    if optional_unique_unit_block(&blocks, "driver_player", driver_id)?.is_some() {
+        return Err(format!("ai_driver_player_not_managed:{driver_id}"));
+    }
     let player = player_block_from_blocks(&blocks)?
         .ok_or_else(|| "garage_block_invalid:player_missing".to_string())?;
     let hired = read_array_values(&player, "drivers", "ai_driver_player_array_invalid")?;
@@ -380,7 +399,8 @@ pub fn apply_ai_driver_truck_update(
     let active_player_trucks = active_player_truck_ids(&player);
     let mut changed_garages = HashSet::from([driver_garage_id.clone()]);
 
-    if let Some(truck_id) = truck_id.filter(|value| !value.trim().is_empty()) {
+    // G2: the driver_ai.assigned_truck linkage follows the slot change.
+    let assigned_truck = if let Some(truck_id) = truck_id.filter(|value| !value.trim().is_empty()) {
         if !is_null_ref(&current_truck) && current_truck.eq_ignore_ascii_case(truck_id) {
             return Err("ai_driver_truck_already_assigned".to_string());
         }
@@ -400,6 +420,7 @@ pub fn apply_ai_driver_truck_update(
             .ok_or_else(|| format!("garage_not_found:{driver_garage_id}"))?
             .vehicles[driver_slot] = truck_id.to_string();
         changed_garages.insert(source_garage_id);
+        Some(truck_id.to_string())
     } else {
         if is_null_ref(&current_truck) {
             return Err("ai_driver_truck_already_unassigned".to_string());
@@ -431,7 +452,8 @@ pub fn apply_ai_driver_truck_update(
             .ok_or_else(|| format!("garage_not_found:{driver_garage_id}"))?
             .vehicles[driver_slot] = "null".to_string();
         changed_garages.insert(storage.0);
-    }
+        None
+    };
 
     build_ai_driver_plan(
         content,
@@ -441,6 +463,7 @@ pub fn apply_ai_driver_truck_update(
         &garages,
         &changed_garages,
         vec![driver_id.to_string()],
+        &[(driver_id.to_string(), assigned_truck)],
     )
 }
 
@@ -458,6 +481,14 @@ pub fn apply_ai_driver_removal(
     if requested.len() != driver_ids.len() || requested.contains("") {
         return Err("ai_driver_selection_invalid".to_string());
     }
+    let blocks = parse_unit_blocks(content);
+    // G1: the player's own driver must never be dismissed, even if a
+    // stale caller passes its id.
+    for driver_id in driver_ids {
+        if optional_unique_unit_block(&blocks, "driver_player", driver_id)?.is_some() {
+            return Err(format!("ai_driver_player_not_removable:{driver_id}"));
+        }
+    }
     let management = parse_ai_driver_management_from_sii(content, "ets2", "")?;
     for driver_id in driver_ids {
         let driver = management
@@ -470,7 +501,6 @@ pub fn apply_ai_driver_removal(
         }
     }
 
-    let blocks = parse_unit_blocks(content);
     let economy = economy_block_from_blocks(&blocks)?;
     let player = player_block_from_blocks(&blocks)?
         .ok_or_else(|| "garage_block_invalid:player_missing".to_string())?;
@@ -551,6 +581,11 @@ pub fn apply_ai_driver_removal(
         &garages,
         &changed_garages,
         driver_ids.to_vec(),
+        // G2: a dismissed driver goes back to the pool with no truck.
+        &driver_ids
+            .iter()
+            .map(|driver_id| (driver_id.clone(), None))
+            .collect::<Vec<_>>(),
     )
 }
 
@@ -606,6 +641,7 @@ fn move_random_available_truck(
         &garages,
         &changed_garages,
         Vec::new(),
+        &[],
     )?;
     Ok((plan, truck_id, target_slot))
 }
@@ -822,6 +858,11 @@ fn build_ai_driver_plan(
     garages: &HashMap<String, GarageAssignmentState>,
     changed_garages: &HashSet<String>,
     affected_driver_ids: Vec<String>,
+    // G2: (driver id, truck id or None to clear) — keeps the
+    // driver_ai.assigned_truck linkage in sync with the garage slot
+    // assignment, since the truck-change resolver treats assigned_truck
+    // as authoritative.
+    driver_truck_assignments: &[(String, Option<String>)],
 ) -> Result<AiDriverWritePlan, String> {
     let mut replacements = Vec::new();
     if player.raw_block != player_raw {
@@ -842,12 +883,29 @@ fn build_ai_driver_plan(
         let raw = rewrite_array_field(&raw, "drivers", &garage.drivers)?;
         replacements.push((garage.block.clone(), raw));
     }
+    let mut changed_driver_ids = Vec::new();
+    if !driver_truck_assignments.is_empty() {
+        let driver_blocks = parse_unit_blocks(content);
+        for (driver_id, truck_id) in driver_truck_assignments {
+            let driver_block =
+                optional_unique_unit_block(&driver_blocks, "driver_ai", driver_id)?
+                    .ok_or_else(|| format!("ai_driver_block_missing:{driver_id}"))?;
+            let value = truck_id.as_deref().unwrap_or("null");
+            let rewritten =
+                replace_scalar_field(&driver_block.raw_block, "assigned_truck", value)?;
+            if rewritten != driver_block.raw_block {
+                replacements.push((driver_block, rewritten));
+                changed_driver_ids.push(driver_id.clone());
+            }
+        }
+    }
     replacements.sort_by(|(left, _), (right, _)| right.start_line.cmp(&left.start_line));
     let mut updated = content.to_string();
     for (block, rewritten) in replacements {
         updated = replace_unit_block(&updated, &block, &rewritten)?;
     }
     let mut changed_unit_ids = changed_garages.iter().cloned().collect::<Vec<_>>();
+    changed_unit_ids.extend(changed_driver_ids);
     if player.raw_block != updated_player_block(content, &updated, &player.id)? {
         changed_unit_ids.push(player.id.clone());
     }
