@@ -126,7 +126,7 @@ fn render_clone_and_rename(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                         }
                     }
                 }
-                if ui.button("🧩 Copy Mod List to Target").clicked() {
+                if ui.button("Copy Mod List to Target").clicked() {
                     match copy_mods_to_profile(
                         app.target_profile_for_copy.clone(),
                         app.profile_state(),
@@ -245,7 +245,7 @@ fn render_profile_sharing(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             });
             if let Some(prev) = &app.share_import_preview {
                 ui.label(format!(
-                    "Detected: {} → Final Name: {} | Files: {} | Conflict: {}",
+                    "Detected: {} -> Final Name: {} | Files: {} | Conflict: {}",
                     prev.detected_profile_name,
                     prev.final_profile_name,
                     prev.file_count,
@@ -257,7 +257,7 @@ fn render_profile_sharing(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
 }
 
 fn render_save_health(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
-    if ui.button("🩺 Scan Active Save Health").clicked() {
+    if ui.button("Scan Active Save Health").clicked() {
         match async_runtime::block_on(get_active_save_health(
             app.profile_state(),
             app.decrypt_cache(),

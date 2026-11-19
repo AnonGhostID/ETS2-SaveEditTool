@@ -207,7 +207,7 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     for entry in entries {
                         let route = match (&entry.source_stop, &entry.target_stop) {
                             (Some(from), Some(to)) => format!(
-                                "{} → {}",
+                                "{} -> {}",
                                 display_job_stop_name(from),
                                 display_job_stop_name(to)
                             ),

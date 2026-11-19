@@ -1,4 +1,5 @@
 use eframe::egui::{self, Color32};
+use egui_extras::{Column, TableBuilder};
 
 use crate::features::garages::commands::{
     assign_random_garage_resources, buy_all_garages, generate_ai_drivers, get_ai_driver_management,
@@ -212,47 +213,74 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             "Try a different search, or turn off the Owned-only filter.",
         );
     } else {
-        // Selectable table in its own scroll area, so the detail card
-        // below stays reachable with 200+ garages.
-        egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
-            egui::Grid::new("garages_table_grid")
-                .striped(true)
-                .num_columns(6)
-                .show(ui, |ui| {
-                    sort_header(app, ui, "Garage / City", GarageSortKey::City);
+        // Selectable table with a sticky header, in its own scroll
+        // area so the detail card below stays reachable with 200+
+        // garages. TableBuilder keeps the header visible while the
+        // rows scroll. Columns use fixed widths (not auto): auto
+        // columns freeze at their first-frame 100px suggestion in
+        // egui_extras 0.29, which wraps the wider sort-header
+        // buttons; the city column takes the remaining width.
+        TableBuilder::new(ui)
+            .id_salt("garages_table")
+            .striped(true)
+            .max_scroll_height(420.0)
+            .column(Column::remainder())
+            .column(Column::initial(70.0))
+            .column(Column::initial(115.0))
+            .column(Column::initial(70.0))
+            .column(Column::initial(155.0))
+            .column(Column::initial(150.0))
+            .header(20.0, |mut header| {
+                header.col(|ui| sort_header(app, ui, "Garage / City", GarageSortKey::City));
+                header.col(|ui| {
                     ui.strong("Country");
-                    sort_header(app, ui, "Ownership", GarageSortKey::Ownership);
-                    sort_header(app, ui, "Size", GarageSortKey::Size);
-                    sort_header(app, ui, "Slots (Used/Max)", GarageSortKey::Slots);
-                    sort_header(app, ui, "Drivers / Trucks", GarageSortKey::Drivers);
-                    ui.end_row();
-
-                    for g in &visible {
-                        let selected = app.selected_garage_id.as_deref() == Some(g.garage_id.as_str());
-                        let label = format!(
-                            "{}{}",
-                            city_label(g),
-                            if g.is_headquarters { " ⭐ (HQ)" } else { "" }
-                        );
+                });
+                header.col(|ui| sort_header(app, ui, "Ownership", GarageSortKey::Ownership));
+                header.col(|ui| sort_header(app, ui, "Size", GarageSortKey::Size));
+                header.col(|ui| sort_header(app, ui, "Slots (Used/Max)", GarageSortKey::Slots));
+                header.col(|ui| {
+                    sort_header(app, ui, "Drivers / Trucks", GarageSortKey::Drivers)
+                });
+            })
+            .body(|mut body| {
+                body.rows(20.0, visible.len(), |mut row| {
+                    let g = &visible[row.index()];
+                    let selected =
+                        app.selected_garage_id.as_deref() == Some(g.garage_id.as_str());
+                    let label = format!(
+                        "{}{}",
+                        city_label(g),
+                        if g.is_headquarters { " ⭐ (HQ)" } else { "" }
+                    );
+                    row.col(|ui| {
                         if ui.selectable_label(selected, label).clicked() {
                             app.selected_garage_id = Some(g.garage_id.clone());
                         }
+                    });
+                    row.col(|ui| {
                         ui.label(g.country_code.as_deref().unwrap_or("-"));
+                    });
+                    row.col(|ui| {
                         if g.ownership == GarageOwnership::Owned {
                             ui.colored_label(Color32::from_rgb(88, 214, 141), "Owned");
                         } else {
                             ui.label("Unowned");
                         }
+                    });
+                    row.col(|ui| {
                         ui.label(format!("{:?}", g.size));
+                    });
+                    row.col(|ui| {
                         ui.label(format!("{}/{}", g.occupied_slots, g.maximum_slot_count));
+                    });
+                    row.col(|ui| {
                         ui.label(format!(
                             "{} drv / {} trk",
                             g.assigned_driver_count, g.assigned_truck_count
                         ));
-                        ui.end_row();
-                    }
+                    });
                 });
-        });
+            });
     }
 
     // Detail card for the selected garage.
@@ -386,9 +414,9 @@ fn size_rank(size: &GarageSize) -> u8 {
 fn sort_header(app: &mut Ets2NativeApp, ui: &mut egui::Ui, label: &str, key: GarageSortKey) {
     let arrow = if app.garage_sort_key == key {
         if app.garage_sort_asc {
-            " ▲"
+            " ^"
         } else {
-            " ▼"
+            " v"
         }
     } else {
         ""

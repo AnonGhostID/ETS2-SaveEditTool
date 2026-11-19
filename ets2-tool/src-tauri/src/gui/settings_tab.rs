@@ -184,7 +184,7 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                         Err(e) => app.set_status(e, true),
                     }
                 }
-                if ui.button("🧹 Clear User Logs").clicked() {
+                if ui.button("Clear User Logs").clicked() {
                     let _ = clear_user_logs();
                     app.user_logs.clear();
                 }

@@ -427,7 +427,7 @@ pub fn render(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     ));
                 }
             });
-            if ui.button("Open Coaches →").clicked() {
+            if ui.button("Open Coaches ->").clicked() {
                 app.active_tab = WorkspaceTab::Coaches;
             }
         });

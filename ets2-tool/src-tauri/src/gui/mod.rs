@@ -824,6 +824,15 @@ impl Ets2NativeApp {
             self.edit_xp_input = truck_xp;
         }
 
+        // Keep the Target Level input in sync with the save's current
+        // level (same total XP as the LEVEL tile), so Apply Level
+        // starts as a no-op instead of jumping to the stale default
+        // of 50.
+        if let Some(xp) = self.save_data.as_ref().and_then(|d| d.xp) {
+            self.edit_level_input =
+                crate::xp::command::calculate_level(xp.max(0) as u64).level as i64;
+        }
+
         if let Ok(qs) = async_runtime::block_on(quicksave_game_info(
             self.profile_state(),
             self.profile_cache(),
@@ -1105,7 +1114,7 @@ impl Ets2NativeApp {
                     .map(|u| u.can_undo)
                     .unwrap_or(false);
             if ui
-                .add_enabled(can_undo, egui::Button::new("↶ Undo"))
+                .add_enabled(can_undo, egui::Button::new("↺ Undo"))
                 .clicked()
             {
                 match undo_last_save_change(
@@ -1131,7 +1140,7 @@ impl Ets2NativeApp {
             let dirty = save_session::is_dirty();
             if dirty {
                 ui.label(
-                    RichText::new("● Unsaved changes")
+                    RichText::new("! Unsaved changes")
                         .size(9.5)
                         .strong()
                         .color(theme::WARNING),

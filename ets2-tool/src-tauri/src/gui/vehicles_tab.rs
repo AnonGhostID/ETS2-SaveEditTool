@@ -1,4 +1,5 @@
 use eframe::egui::{self, Color32};
+use egui_extras::{Column, TableBuilder};
 
 use crate::features::trailer_change::commands::{
     apply_active_trailer_switch, initialize_trailer_change_session,
@@ -345,36 +346,61 @@ fn render_truck_switcher(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
     // Master-detail: selectable table left, preview + Apply right.
     ui.columns(2, |cols| {
         let filter = app.truck_switch_search.trim().to_ascii_lowercase();
-        egui::ScrollArea::vertical().max_height(420.0).show(&mut cols[0], |ui| {
-            egui::Grid::new("truck_switch_grid")
-                .striped(true)
-                .num_columns(4)
-                .show(ui, |ui| {
+        let trucks: Vec<_> = session
+            .owned_trucks
+            .iter()
+            .filter(|item| {
+                if filter.is_empty() {
+                    return true;
+                }
+                let brand_model = format!(
+                    "{} {}",
+                    item.brand.as_deref().unwrap_or("-"),
+                    item.model.as_deref().unwrap_or("-")
+                );
+                brand_model.to_ascii_lowercase().contains(&filter)
+                    || item.truck_id.to_ascii_lowercase().contains(&filter)
+                    || item
+                        .display_license_plate
+                        .as_deref()
+                        .unwrap_or("")
+                        .to_ascii_lowercase()
+                        .contains(&filter)
+            })
+            .collect();
+        TableBuilder::new(&mut cols[0])
+            .id_salt("truck_switch_table")
+            .striped(true)
+            .max_scroll_height(420.0)
+            .column(Column::remainder())
+            .column(Column::initial(80.0))
+            .column(Column::initial(110.0))
+            .column(Column::initial(100.0))
+            .header(20.0, |mut header| {
+                header.col(|ui| {
                     ui.strong("Truck");
+                });
+                header.col(|ui| {
                     ui.strong("Plate");
+                });
+                header.col(|ui| {
                     ui.strong("Garage");
+                });
+                header.col(|ui| {
                     ui.strong("Status");
-                    ui.end_row();
-
-                    for item in &session.owned_trucks {
-                        let brand_model = format!(
-                            "{} {}",
-                            item.brand.as_deref().unwrap_or("-"),
-                            item.model.as_deref().unwrap_or("-")
-                        );
-                        if !filter.is_empty()
-                            && !brand_model.to_ascii_lowercase().contains(&filter)
-                            && !item.truck_id.to_ascii_lowercase().contains(&filter)
-                            && !item
-                                .display_license_plate
-                                .as_deref()
-                                .unwrap_or("")
-                                .to_ascii_lowercase()
-                                .contains(&filter)
-                        {
-                            continue;
-                        }
-                        let selected = app.selected_switch_truck_id == item.truck_id;
+                });
+            })
+            .body(|mut body| {
+                // Rows are two lines tall (brand/model over truck id).
+                body.rows(36.0, trucks.len(), |mut row| {
+                    let item = trucks[row.index()];
+                    let brand_model = format!(
+                        "{} {}",
+                        item.brand.as_deref().unwrap_or("-"),
+                        item.model.as_deref().unwrap_or("-")
+                    );
+                    let selected = app.selected_switch_truck_id == item.truck_id;
+                    row.col(|ui| {
                         if ui
                             .selectable_label(selected, format!("{brand_model}\n{}", item.truck_id))
                             .clicked()
@@ -395,8 +421,14 @@ fn render_truck_switcher(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                                 }
                             }
                         }
+                    });
+                    row.col(|ui| {
                         ui.label(item.display_license_plate.as_deref().unwrap_or("-"));
+                    });
+                    row.col(|ui| {
                         ui.label(item.garage_display_name.as_deref().unwrap_or("-"));
+                    });
+                    row.col(|ui| {
                         if item.is_active {
                             ui.colored_label(Color32::from_rgb(88, 214, 141), "Active");
                         } else if item.is_switchable {
@@ -407,10 +439,9 @@ fn render_truck_switcher(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                                 item.blocked_reason.as_deref().unwrap_or("Blocked"),
                             );
                         }
-                        ui.end_row();
-                    }
+                    });
                 });
-        });
+            });
 
         if let Some(preview) = app.truck_switch_preview.clone() {
             cols[1].card(|ui| {
@@ -520,31 +551,49 @@ fn render_trailer_switcher(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
     // Master-detail: selectable table left, preview + Apply right.
     ui.columns(2, |cols| {
         let filter = app.trailer_switch_search.trim().to_ascii_lowercase();
-        egui::ScrollArea::vertical().max_height(420.0).show(&mut cols[0], |ui| {
-            egui::Grid::new("trailer_switch_grid")
-                .striped(true)
-                .num_columns(4)
-                .show(ui, |ui| {
+        let trailers: Vec<_> = session
+            .owned_trailers
+            .iter()
+            .filter(|item| {
+                filter.is_empty()
+                    || item.display_name.to_ascii_lowercase().contains(&filter)
+                    || item.trailer_id.to_ascii_lowercase().contains(&filter)
+                    || item
+                        .display_license_plate
+                        .as_deref()
+                        .unwrap_or("")
+                        .to_ascii_lowercase()
+                        .contains(&filter)
+            })
+            .collect();
+        TableBuilder::new(&mut cols[0])
+            .id_salt("trailer_switch_table")
+            .striped(true)
+            .max_scroll_height(420.0)
+            .column(Column::remainder())
+            .column(Column::initial(80.0))
+            .column(Column::initial(110.0))
+            .column(Column::initial(100.0))
+            .header(20.0, |mut header| {
+                header.col(|ui| {
                     ui.strong("Trailer");
+                });
+                header.col(|ui| {
                     ui.strong("Plate");
+                });
+                header.col(|ui| {
                     ui.strong("Garage");
+                });
+                header.col(|ui| {
                     ui.strong("Status");
-                    ui.end_row();
-
-                    for item in &session.owned_trailers {
-                        if !filter.is_empty()
-                            && !item.display_name.to_ascii_lowercase().contains(&filter)
-                            && !item.trailer_id.to_ascii_lowercase().contains(&filter)
-                            && !item
-                                .display_license_plate
-                                .as_deref()
-                                .unwrap_or("")
-                                .to_ascii_lowercase()
-                                .contains(&filter)
-                        {
-                            continue;
-                        }
-                        let selected = app.selected_switch_trailer_id == item.trailer_id;
+                });
+            })
+            .body(|mut body| {
+                // Rows are two lines tall (name over trailer id).
+                body.rows(36.0, trailers.len(), |mut row| {
+                    let item = trailers[row.index()];
+                    let selected = app.selected_switch_trailer_id == item.trailer_id;
+                    row.col(|ui| {
                         if ui
                             .selectable_label(
                                 selected,
@@ -570,8 +619,14 @@ fn render_trailer_switcher(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                                 }
                             }
                         }
+                    });
+                    row.col(|ui| {
                         ui.label(item.display_license_plate.as_deref().unwrap_or("-"));
+                    });
+                    row.col(|ui| {
                         ui.label(item.garage_display_name.as_deref().unwrap_or("-"));
+                    });
+                    row.col(|ui| {
                         if item.is_active {
                             ui.colored_label(Color32::from_rgb(88, 214, 141), "Active");
                         } else if item.is_switchable {
@@ -579,10 +634,9 @@ fn render_trailer_switcher(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                         } else {
                             ui.colored_label(Color32::from_rgb(231, 76, 60), "Blocked");
                         }
-                        ui.end_row();
-                    }
+                    });
                 });
-        });
+            });
 
         if let Some(preview) = app.trailer_switch_preview.clone() {
             cols[1].card(|ui| {
@@ -747,12 +801,12 @@ fn render_powertrain_swapper(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     prev.truck_id, prev.truck_family, prev.experimental_cross_brand
                 ));
                 ui.label(format!(
-                    "Current Engine: {:?} → Selected: {:?}",
+                    "Current Engine: {:?} -> Selected: {:?}",
                     prev.current_engine.current_data_path,
                     prev.new_engine.as_ref().and_then(|e| e.selected_name.as_ref())
                 ));
                 ui.label(format!(
-                    "Current Transmission: {:?} → Selected: {:?}",
+                    "Current Transmission: {:?} -> Selected: {:?}",
                     prev.current_transmission.current_data_path,
                     prev.new_transmission
                         .as_ref()
@@ -825,12 +879,25 @@ fn render_fleet_inventory(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             "Try a different search, or reload the save data.",
         );
     } else {
-        egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
-            egui::Grid::new("all_trucks_grid")
-                .striped(true)
-                .num_columns(6)
-                .show(ui, |ui| {
+        // Each table gets its own id scope: TableBuilder's internal
+        // ScrollArea derives its id from the parent Ui, so two
+        // tables in one Ui would collide ("First/Second use of
+        // ScrollArea ID") without this.
+        ui.push_id("all_trucks_table", |ui| {
+            TableBuilder::new(ui)
+            .striped(true)
+            .max_scroll_height(420.0)
+            .column(Column::initial(170.0))
+            .column(Column::remainder())
+            .column(Column::initial(120.0))
+            .column(Column::initial(130.0))
+            .column(Column::initial(80.0))
+            .column(Column::initial(100.0))
+            .header(20.0, |mut header| {
+                header.col(|ui| {
                     ui.strong("Truck ID");
+                });
+                header.col(|ui| {
                     fleet_sort_header(
                         &mut app.fleet_truck_sort,
                         &mut app.fleet_truck_sort_asc,
@@ -838,7 +905,11 @@ fn render_fleet_inventory(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                         "Brand & Model",
                         FleetTruckSort::Brand,
                     );
+                });
+                header.col(|ui| {
                     ui.strong("License Plate");
+                });
+                header.col(|ui| {
                     fleet_sort_header(
                         &mut app.fleet_truck_sort,
                         &mut app.fleet_truck_sort_asc,
@@ -846,6 +917,8 @@ fn render_fleet_inventory(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                         "Odometer (km)",
                         FleetTruckSort::Odometer,
                     );
+                });
+                header.col(|ui| {
                     fleet_sort_header(
                         &mut app.fleet_truck_sort,
                         &mut app.fleet_truck_sort_asc,
@@ -853,6 +926,8 @@ fn render_fleet_inventory(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                         "Fuel %",
                         FleetTruckSort::Fuel,
                     );
+                });
+                header.col(|ui| {
                     fleet_sort_header(
                         &mut app.fleet_truck_sort,
                         &mut app.fleet_truck_sort_asc,
@@ -860,17 +935,31 @@ fn render_fleet_inventory(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                         "Garage",
                         FleetTruckSort::Garage,
                     );
-                    ui.end_row();
-                    for t in &trucks {
-                        ui.label(&t.truck_id);
-                        ui.label(format!("{} {}", t.brand, t.model));
-                        ui.label(t.license_plate.as_deref().unwrap_or("-"));
-                        ui.label(format!("{:.0}", t.odometer));
-                        ui.label(format!("{:.0}%", t.fuel_relative * 100.0));
-                        ui.label(t.assigned_garage.as_deref().unwrap_or("-"));
-                        ui.end_row();
-                    }
                 });
+            })
+            .body(|mut body| {
+                body.rows(20.0, trucks.len(), |mut row| {
+                    let t = trucks[row.index()];
+                    row.col(|ui| {
+                        ui.label(&t.truck_id);
+                    });
+                    row.col(|ui| {
+                        ui.label(format!("{} {}", t.brand, t.model));
+                    });
+                    row.col(|ui| {
+                        ui.label(t.license_plate.as_deref().unwrap_or("-"));
+                    });
+                    row.col(|ui| {
+                        ui.label(format!("{:.0}", t.odometer));
+                    });
+                    row.col(|ui| {
+                        ui.label(format!("{:.0}%", t.fuel_relative * 100.0));
+                    });
+                    row.col(|ui| {
+                        ui.label(t.assigned_garage.as_deref().unwrap_or("-"));
+                    });
+                });
+            });
         });
     }
 
@@ -925,12 +1014,21 @@ fn render_fleet_inventory(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             "Try a different search, or reload the save data.",
         );
     } else {
-        egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
-            egui::Grid::new("all_trailers_grid")
-                .striped(true)
-                .num_columns(5)
-                .show(ui, |ui| {
+        // Own id scope, same reason as the trucks table above.
+        ui.push_id("all_trailers_table", |ui| {
+            TableBuilder::new(ui)
+            .striped(true)
+            .max_scroll_height(420.0)
+            .column(Column::initial(170.0))
+            .column(Column::remainder())
+            .column(Column::initial(120.0))
+            .column(Column::initial(150.0))
+            .column(Column::initial(170.0))
+            .header(20.0, |mut header| {
+                header.col(|ui| {
                     ui.strong("Trailer ID");
+                });
+                header.col(|ui| {
                     fleet_sort_header(
                         &mut app.fleet_trailer_sort,
                         &mut app.fleet_trailer_sort_asc,
@@ -938,7 +1036,11 @@ fn render_fleet_inventory(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                         "Body Type",
                         FleetTrailerSort::Body,
                     );
+                });
+                header.col(|ui| {
                     ui.strong("License Plate");
+                });
+                header.col(|ui| {
                     fleet_sort_header(
                         &mut app.fleet_trailer_sort,
                         &mut app.fleet_trailer_sort_asc,
@@ -946,6 +1048,8 @@ fn render_fleet_inventory(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                         "Cargo Mass (kg)",
                         FleetTrailerSort::Cargo,
                     );
+                });
+                header.col(|ui| {
                     fleet_sort_header(
                         &mut app.fleet_trailer_sort,
                         &mut app.fleet_trailer_sort_asc,
@@ -953,25 +1057,37 @@ fn render_fleet_inventory(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                         "Body / Chassis Wear",
                         FleetTrailerSort::Wear,
                     );
-                    ui.end_row();
-                    for tr in &trailers {
+                });
+            })
+            .body(|mut body| {
+                body.rows(20.0, trailers.len(), |mut row| {
+                    let tr = trailers[row.index()];
+                    row.col(|ui| {
                         ui.label(&tr.trailer_id);
+                    });
+                    row.col(|ui| {
                         ui.label(tr.body_type.as_deref().unwrap_or("-"));
+                    });
+                    row.col(|ui| {
                         ui.label(
                             tr.display_license_plate
                                 .as_deref()
                                 .or(tr.license_plate.as_deref())
                                 .unwrap_or("-"),
                         );
+                    });
+                    row.col(|ui| {
                         ui.label(format!("{:.1}", tr.cargo_mass));
+                    });
+                    row.col(|ui| {
                         ui.label(format!(
                             "{:.1}% / {:.1}%",
                             tr.body_wear * 100.0,
                             tr.chassis_wear * 100.0
                         ));
-                        ui.end_row();
-                    }
+                    });
                 });
+            });
         });
     }
 }
@@ -986,9 +1102,9 @@ fn fleet_sort_header<T: Copy + PartialEq>(
 ) {
     let arrow = if *current == key {
         if *ascending {
-            " ▲"
+            " ^"
         } else {
-            " ▼"
+            " v"
         }
     } else {
         ""

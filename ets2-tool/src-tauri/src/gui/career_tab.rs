@@ -168,7 +168,7 @@ fn render_live_telemetry(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     ui.colored_label(
                         Color32::from_rgb(245, 176, 65),
                         format!(
-                            "Active Trip #{}: {} → {} ({}, {:.1} km, avg {:.1} km/h)",
+                            "Active Trip #{}: {} -> {} ({}, {:.1} km, avg {:.1} km/h)",
                             trip.trip_id,
                             trip.origin,
                             trip.destination,
@@ -229,7 +229,7 @@ fn render_dispatcher(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                 Err(e) => app.set_status(format!("Snapshot error: {e}"), true),
             }
         }
-        if ui.button("🧹 Cleanup Expired Jobs").clicked() {
+        if ui.button("Cleanup Expired Jobs").clicked() {
             if let Ok(st) = dispatcher_cleanup_expired_jobs(app.career_state(), app.profile_state())
             {
                 app.dispatcher_gen_status = Some(st);
@@ -354,7 +354,7 @@ fn render_dispatcher(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
                     app.selected_market_job_id = job.id.clone();
                 }
                 ui.label(format!(
-                    "{} ({}) → {} ({})",
+                    "{} ({}) -> {} ({})",
                     job.origin_city, job.origin_country, job.destination_city, job.destination_country
                 ));
                 ui.label(format!("{} ({:.0} kg)", job.cargo_type, job.cargo_mass_kg));
@@ -389,7 +389,7 @@ fn render_job_detail(
     ui.add_space(10.0);
     ui.card(|ui| {
         ui.heading(format!(
-            "{} → {}",
+            "{} -> {}",
             job.origin_city, job.destination_city
         ));
         ui.label(format!(
@@ -507,9 +507,9 @@ fn dispatcher_sort_header(
 ) {
     let arrow = if *current == key {
         if *ascending {
-            " ▲"
+            " ^"
         } else {
-            " ▼"
+            " v"
         }
     } else {
         ""
@@ -579,7 +579,7 @@ fn render_logbook_and_analytics(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
             for t in &app.trip_log {
                 ui.label(format!("#{}", t.id));
                 ui.label(format!(
-                    "{} → {}",
+                    "{} -> {}",
                     t.origin.as_deref().unwrap_or("-"),
                     t.destination.as_deref().unwrap_or("-")
                 ));

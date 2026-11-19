@@ -377,7 +377,7 @@ fn render_presets_and_sandboxes(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
 
 fn render_conflict_analyzer(app: &mut Ets2NativeApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
-        if ui.button("🩺 Run Standard Conflict Diagnostics").clicked() {
+        if ui.button("Run Standard Conflict Diagnostics").clicked() {
             match async_runtime::block_on(analyze_mod_conflict_diagnostics(
                 app.profile_state(),
                 app.decrypt_cache(),
