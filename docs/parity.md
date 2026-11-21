@@ -29,6 +29,7 @@ Every row of `docs/ui-audit.md` must appear here and be ticked by the owning scr
 | Safety spine linkage | Backup count + last outcome, staged-edit warning on restore | Absent (audit gap a) | Safety › Backups & Restore › status card + Restore | ✓ |
 
 ## Operations sector (Phase 3 fan-out — `gui/screens/career.rs`)
+## Library sector (Phase 3 fan-out — `gui/screens/mods.rs`)
 
 | Area | Feature | Old location | New location | Done |
 |---|---|---|---|---|
@@ -69,3 +70,32 @@ Every row of `docs/ui-audit.md` must appear here and be ticked by the owning scr
 | VTC & Account | C-090 create company with validation | VTC `Create VTC Company` | Operations › VTC & Account › Company (name/HQ validation) | ✓ |
 | VTC & Account | Loading/empty/error/validation + Retry | Status toast / silent empty | `loading_state` / `empty_state` / `error_state` + Retry / form validation + Issues | ✓ |
 | Operations save-safety | Backups/staged note, Issues drawer and Save staging status | Top-bar status only | Every Operations sub-view: staging note + `Open Issues` + Safety Spine Save | ✓ |
+| Mod Manager | Four-tile sub-view map | Mods sub-tabs (Mod Manager / Presets / Conflict Analyzer) | Library › Mod Manager (Scan & Summary / Installed Mods / Workshop & Links), Presets, Sandboxes, Conflict Analyzer | ✓ |
+| Mod Manager | C-098 load mod manager state | Mods Manager `Load State` | Library › Mod Manager › Scan & Summary (Load State) | ✓ |
+| Mod Manager | C-099 open Steam console | Mods Manager `Open Steam Console` | Library › Mod Manager (Open Steam Console, also Workshop & Links) | ✓ |
+| Mod Manager | C-100 deep mod scan with background progress | Mods Manager `Deep Scan Mods` | Library › Mod Manager (Deep Scan Mods + progress row) | ✓ |
+| Mod Manager | C-101 light mod scan with background progress | Mods Manager `Quick Scan Mods` | Library › Mod Manager (Quick Scan Mods + progress row) | ✓ |
+| Mod Manager | C-105 choose manual Workshop directory | Presets & Sandboxes `Set Manual Workshop Folder` | Library › Mod Manager › Workshop & Links (Set Manual Workshop Folder) | ✓ |
+| Mod Manager | C-106 clear manual Workshop directory | Presets & Sandboxes `Clear Manual Workshop Folder` | Library › Mod Manager › Workshop & Links (Clear Manual Workshop Folder) | ✓ |
+| Mod Manager | C-107 open Workshop page | Installed mod row `Steam Workshop` | Library › Mod Manager › Installed Mods (selected row) / Workshop & Links (first detected) | ✓ |
+| Mod Manager | Installed mod table with order/source/status/workshop id | Mods Manager discovered-mods grid | Library › Mod Manager › Installed Mods (`components::table`) | ✓ |
+| Mod Manager | Scan loading/empty/error/validation + Retry | Spinner / status toast | progress row + `loading_state` / `empty_state` / `error_state` with Retry / inline validation + Issues | ✓ |
+| Presets | C-104 list mod presets | Presets & Sandboxes `Load Presets` | Library › Presets › Preset list (Load Presets + one-time load) | ✓ |
+| Presets | C-108 import preset JSON (cross-game notice) | Presets & Sandboxes `Import Preset JSON` | Library › Presets › Preset list (Import Preset JSON) | ✓ |
+| Presets | C-109 create preset from current mods | Presets & Sandboxes `Save Current as Preset` | Library › Presets › Preset list (name/notes form) | ✓ |
+| Presets | C-110 compare preset with active profile | Presets & Sandboxes `Compare` | Library › Presets › Comparison (summary tiles, warnings) | ✓ |
+| Presets | C-111 export preset JSON | Presets & Sandboxes `Export` | Library › Presets › Preset list (Export JSON) | ✓ |
+| Presets | C-102 delete preset, confirmed | Mods confirm dialog | Library › Presets › Preset list (Delete preset → shared confirm dialog) | ✓ |
+| Presets | Preset loading/empty/error/validation + Retry | Status toast / silent empty | `loading_state` / `empty_state` / `error_state` with Retry / name + selection validation + Issues | ✓ |
+| Sandboxes | C-112 load mod sandboxes | Presets & Sandboxes `Load Sandboxes` | Library › Sandboxes (Load Sandboxes + one-time load) | ✓ |
+| Sandboxes | C-113 create sandbox | Presets & Sandboxes `Create Sandbox` | Library › Sandboxes (Create sandbox form) | ✓ |
+| Sandboxes | C-115 add mod to sandbox | Presets & Sandboxes `+ Add Mod` | Library › Sandboxes (target select + Workshop ID/URL) | ✓ |
+| Sandboxes | C-114 apply sandbox to active profile, confirmed | Presets & Sandboxes `Apply to Active Profile` | Library › Sandboxes (Apply to Active Profile → shared confirm dialog with staged-edit warning and backup path) | ✓ |
+| Sandboxes | C-103 delete sandbox, confirmed | Mods confirm dialog | Library › Sandboxes (Delete sandbox → shared confirm dialog) | ✓ |
+| Sandboxes | Sandbox loading/empty/error/validation + Retry | Status toast / silent empty | `loading_state` / `empty_state` / `error_state` with Retry / title + target + input validation + Issues | ✓ |
+| Conflict Analyzer | C-116 standard conflict diagnostics | Mods Analyzer `Run Standard Conflict Diagnostics` | Library › Conflict Analyzer (Run Standard Conflict Diagnostics) | ✓ |
+| Conflict Analyzer | C-117 deep conflict diagnostics | Mods Analyzer `Run Deep Conflict Diagnostics` | Library › Conflict Analyzer (Run Deep Conflict Diagnostics) | ✓ |
+| Conflict Analyzer | Report view (status, confidence, crash counts, suspects, missing refs) | Mods Analyzer report card + grid | Library › Conflict Analyzer (report card + suspected-mods table + detail lists) | ✓ |
+| Conflict Analyzer | C-118 export conflict report | Mods Analyzer `Export Diagnostic Report` | Library › Conflict Analyzer (Export Diagnostic Report, requires completed report) | ✓ |
+| Conflict Analyzer | Analysis loading/empty/error/validation + Retry | Blocking `block_on` + status toast | `loading_state` / `empty_state` / `error_state` with Retry / export validation + Issues | ✓ |
+| Library save-safety | Issues surface and backup/staged visibility | Status toast only | All four tiles: `Open Issues` command + Safety Spine (shell-owned), backup path shown after sandbox apply, staged warning in confirm | ✓ |
