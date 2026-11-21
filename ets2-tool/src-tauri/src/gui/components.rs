@@ -261,10 +261,12 @@ pub fn confirm_dialog(
             ui.label(message);
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if primary_button(ui, confirm_text).clicked() {
+                let confirm = ui.push_id(modal_focus_id(0), |ui| primary_button(ui, confirm_text));
+                if confirm.inner.clicked() {
                     choice = Some(true);
                 }
-                if ui.button(cancel_text).clicked() {
+                let cancel = ui.push_id(modal_focus_id(1), |ui| ui.button(cancel_text));
+                if cancel.inner.clicked() {
                     choice = Some(false);
                 }
             });

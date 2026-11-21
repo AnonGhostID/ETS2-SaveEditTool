@@ -3,7 +3,7 @@
 use eframe::egui::{self, RichText};
 
 use crate::gui::components;
-use crate::gui::screens::ContextAction;
+use crate::gui::screens::{ContextAction, ScreenStates};
 use crate::gui::shell::{AppShell, ConfirmAction};
 use crate::gui::theme;
 
@@ -79,29 +79,8 @@ fn render_confirm(shell: &mut AppShell, ctx: &egui::Context, confirm: &ConfirmAc
             "Undo restores the previous save from a backup. Staged edits must be saved or discarded first. Continue?",
         ),
     };
-    let mut answer: Option<bool> = None;
-    let mut cancelled = ctx.input(|input| input.key_pressed(egui::Key::Escape));
-    let response = components::modal(ctx, title, |ui| {
-        ui.label(RichText::new(message).size(12.5).color(theme::TEXT).wrap());
-        ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            let yes = ui.push_id(components::modal_focus_id(0), |ui| {
-                components::primary_button(ui, "Yes")
-            });
-            if yes.inner.clicked() {
-                answer = Some(true);
-            }
-            let no = ui.push_id(components::modal_focus_id(1), |ui| {
-                components::button(ui, "No")
-            });
-            if no.inner.clicked() {
-                answer = Some(false);
-            }
-        });
-    });
-    if response.is_none() {
-        cancelled = true;
-    }
+    let cancelled = ctx.input(|input| input.key_pressed(egui::Key::Escape));
+    let mut answer = components::confirm_dialog(ctx, title, message, "Yes", "No");
     if cancelled {
         answer = Some(false);
     }
@@ -118,7 +97,7 @@ fn finish_undo(shell: &mut AppShell) {
     match crate::gui::data::session::undo_last(&shell.data) {
         Ok(()) => {
             shell.push_toast("Last save change undone from backup.", false);
-            shell.screen_states = crate::gui::screens::ScreenStates::default();
+            shell.screen_states = ScreenStates::default();
             shell.refresh_safety();
             shell.refresh_context();
         }
