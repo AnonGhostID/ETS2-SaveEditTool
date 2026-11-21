@@ -1,5 +1,13 @@
 //! Small composable widgets shared by every workspace view.
 
+pub mod data;
+pub mod feedback;
+pub mod form;
+
+pub use data::*;
+pub use feedback::*;
+pub use form::*;
+
 use eframe::egui::{
     self, Align2, Color32, FontId, Frame, Margin, Response, RichText, Rounding, Sense, Stroke, Ui,
 };
