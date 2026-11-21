@@ -705,6 +705,9 @@ fn execute(operation: Operation, state: &mut ScreenState, ctx: &mut ScreenCtx<'_
             state.last_error = None;
             state.last_message = Some(message.clone());
             reload(state, ctx);
+            // Screen-level mutations can create backups; keep the Safety Spine
+            // backup count and last outcome current without a full Save.
+            ctx.commands.push(ShellCommand::RefreshSafety);
             info(ctx, message);
         }
         Err(message) => {
@@ -1114,44 +1117,64 @@ fn render_garage_detail(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut Sc
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
             if !row.owned && comp::button(ui, "Buy garage").clicked() {
-                state.schedule(
+                state.ask_confirm(
+                    "Buy garage",
+                    format!(
+                        "Buy {} (expected save hash {})? This spends money and stages an edit in the save.",
+                        row.label, hash
+                    ),
+                    "Buy",
                     Operation::Purchase {
                         id: row.id.clone(),
                         hash: hash.clone(),
                         label: row.label.clone(),
                     },
-                    "Buying garage…",
                 );
             }
             if row.owned {
                 if comp::button(ui, "Upgrade").clicked() {
-                    state.schedule(
+                    state.ask_confirm(
+                        "Upgrade garage",
+                        format!(
+                            "Upgrade {} (expected save hash {})? This spends money and stages an edit in the save.",
+                            row.label, hash
+                        ),
+                        "Upgrade",
                         Operation::Upgrade {
                             id: row.id.clone(),
                             hash: hash.clone(),
                             label: row.label.clone(),
                         },
-                        "Upgrading garage…",
                     );
                 }
                 if comp::button(ui, "Assign driver + truck").clicked() {
-                    state.schedule(
+                    state.ask_confirm(
+                        "Assign driver + truck",
+                        format!(
+                            "Assign a random driver and truck to {} (expected save hash {})? This stages an edit in the save.",
+                            row.label, hash
+                        ),
+                        "Assign",
                         Operation::AssignRandom {
                             id: row.id.clone(),
                             hash: hash.clone(),
                             label: row.label.clone(),
                         },
-                        "Assigning random resources…",
                     );
                 }
                 if !row.hq && comp::button(ui, "Set as HQ").clicked() {
-                    state.schedule(
+                    state.ask_confirm(
+                        "Set headquarters",
+                        format!(
+                            "Set {} (expected save hash {}) as headquarters? This stages an edit in the save.",
+                            row.label, hash
+                        ),
+                        "Set HQ",
                         Operation::SetHeadquarters {
                             id: row.id.clone(),
                             hash: hash.clone(),
                             label: row.label.clone(),
                         },
-                        "Setting headquarters…",
                     );
                 }
             }
@@ -1610,8 +1633,14 @@ fn render_confirm(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCt
         confirmation.confirm_label,
         "Cancel",
     ) {
-        Some(true) => state.schedule(confirmation.action, "Applying confirmed action…"),
-        Some(false) => info(ctx, "Action cancelled.".to_string()),
+        Some(true) => {
+            state.confirm = None;
+            state.schedule(confirmation.action, "Applying confirmed action…");
+        }
+        Some(false) => {
+            state.confirm = None;
+            info(ctx, "Action cancelled.".to_string());
+        }
         None => {}
     }
 }
