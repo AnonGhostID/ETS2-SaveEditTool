@@ -188,3 +188,35 @@ Every row of `docs/ui-audit.md` must appear here and be ticked by the owning scr
 | Quick Actions | C-032 Generate Market Jobs deep link | Dashboard quick action | Overview › Quick Actions → Operations › Dispatcher › Generation | ✓ |
 | Recent Activity | U-019 last five events + error surfacing | Dashboard `RECENT ACTIVITY` | Overview › Recent Activity (last five persisted log entries + Issues Activity, error + Retry) | ✓ |
 | Overview states | Loading / empty / error + Retry for header, stats, setup, quick actions and activity | Status toasts | `loading_state` / `empty_state` / `error_state` with Retry + Issues opener on every data view | ✓ |
+
+## Vehicles sector (Phase 3 fan-out — `gui/screens/fleet.rs`)
+
+| Area | Feature | Old location | New location | Done |
+|---|---|---|---|---|
+| Vehicle routes | Six-tile sub-view dispatch from shell route + sub-view | Vehicles sub-tabs | Vehicles › Player Truck / Player Trailer / Truck Switcher / Trailer Switcher / Powertrain Swapper / Fleet Inventory | ✓ |
+| Player Truck | C-021 player truck read | Vehicles Player Editor | Vehicles › Player Truck › Fields (one-time load + Retry) | ✓ |
+| Player Truck | C-035 repair truck, confirmed | Vehicles Player Editor `Repair Player Truck` | Vehicles › Player Truck › Fields (Repair truck → shared confirm) | ✓ |
+| Player Truck | C-036 refuel truck, confirmed | Vehicles Player Editor `Refuel Player Truck` | Vehicles › Player Truck › Fields (Refuel truck → shared confirm) | ✓ |
+| Player Truck | C-037 fuel slider 0..1, confirmed | Vehicles Player Editor fuel slider | Vehicles › Player Truck › Fuel & wear (slider + Apply fuel level) | ✓ |
+| Player Truck | C-038 wear slider 0..1 for engine/transmission/cabin/chassis/wheels, confirmed | Vehicles Player Editor wear buttons | Vehicles › Player Truck › Fuel & wear (component select + slider + Apply) | ✓ |
+| Player Truck | C-039 truck license plate with non-empty validation, confirmed | Vehicles Player Editor plate | Vehicles › Player Truck › Plate & odometer | ✓ |
+| Player Truck | C-040 odometer 0..=99,999,999, confirmed | Vehicles Player Editor odometer | Vehicles › Player Truck › Plate & odometer | ✓ |
+| Player Trailer | C-023 player trailer read | Vehicles Player Editor | Vehicles › Player Trailer › Fields (one-time load + Retry) | ✓ |
+| Player Trailer | C-041 repair trailer, confirmed | Vehicles Player Editor `Repair Player Trailer` | Vehicles › Player Trailer › Fields (Repair trailer → shared confirm) | ✓ |
+| Player Trailer | C-042 trailer plate with non-empty validation, confirmed | Vehicles Player Editor plate | Vehicles › Player Trailer › Fields (Apply plate) | ✓ |
+| Player Trailer | C-043 cargo mass 0..=200,000, confirmed | Vehicles Player Editor cargo mass | Vehicles › Player Trailer › Fields (Apply cargo mass) | ✓ |
+| Truck Switcher | C-044 initialize truck switch session | Vehicles Truck Switcher `Scan Owned Trucks` | Vehicles › Truck Switcher › Session (Scan owned trucks for switch) | ✓ |
+| Truck Switcher | C-045 list owned trucks for switch with search | Vehicles Truck Switcher table + search | Vehicles › Truck Switcher › List (search + selectable table) | ✓ |
+| Truck Switcher | C-046 preview warnings, mode, hash and can_apply | Vehicles Truck Switcher preview card | Vehicles › Truck Switcher › Preview (mode, details, warnings, expected hash, can_apply) | ✓ |
+| Truck Switcher | C-047 apply switch with persistent-backup toggle, confirmed | Vehicles Truck Switcher `Apply Active Truck Switch` | Vehicles › Truck Switcher › Apply (backup toggle + shared confirm + result) | ✓ |
+| Trailer Switcher | C-048 initialize trailer switch session | Vehicles Trailer Switcher `Scan Owned Trailers` | Vehicles › Trailer Switcher › Session (Scan owned trailers for switch) | ✓ |
+| Trailer Switcher | C-049 list owned trailers for switch with search | Vehicles Trailer Switcher table + search | Vehicles › Trailer Switcher › List (search + selectable table) | ✓ |
+| Trailer Switcher | C-050 preview warnings, hash and can_apply | Vehicles Trailer Switcher preview card | Vehicles › Trailer Switcher › Preview | ✓ |
+| Trailer Switcher | C-051 apply switch with persistent-backup toggle, confirmed | Vehicles Trailer Switcher `Apply Active Trailer Switch` | Vehicles › Trailer Switcher › Apply (backup toggle + shared confirm + result) | ✓ |
+| Switchers | Expected-hash comparison at preview and apply, stale-hash Reinitialize | Inline hash use | Vehicles › both Switchers › Preview (hash mismatch blocks apply + Reinitialize) | ✓ |
+| Powertrain | C-052 official powertrain catalog with ETS2/ATS selection | Vehicles Powertrain `Load Official Powertrain Catalog` | Vehicles › Powertrain Swapper › Catalog (auto-load + Retry + game select) | ✓ |
+| Powertrain | C-053 engine/transmission preview only (no apply command) | Vehicles Powertrain preview card | Vehicles › Powertrain Swapper › Preview (read-only preview, no Apply) | ✓ |
+| Fleet Inventory | C-020 all trucks with search and four sort keys | Vehicles Fleet Inventory trucks table | Vehicles › Fleet Inventory › Trucks | ✓ |
+| Fleet Inventory | C-022 all trailers with search and three sort keys | Vehicles Fleet Inventory trailers table | Vehicles › Fleet Inventory › Trailers | ✓ |
+| States | Loading / empty / error + Retry and inline validation for all six data views | Status toasts and silent empty panels | All Vehicles tiles (`loading_state`, `empty_state`, `error_state` with Retry, `validation_message` + `Validation:` toast) | ✓ |
+| Safety | Confirm dialog on every Apply, staged-edits warning, Issues opener, shell-owned Save/Backups/Spine | Top-bar status and per-screen buttons | All Vehicles tiles (shared confirm + `Open Issues` + Safety Spine staging note) | ✓ |
