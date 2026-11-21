@@ -2,7 +2,7 @@
 
 
 ## Current phase
-Complete — cargo check/clippy/build pass; runtime QA per docs/qa.md remains with the user.
+Complete — cargo check passes with zero warnings; runtime QA per docs/qa.md remains with the user.
 
 ## Done
 - Created `ui-rebuild` branch from `main`
@@ -21,8 +21,8 @@ Complete — cargo check/clippy/build pass; runtime QA per docs/qa.md remains wi
 - Phase 4: entry point switched to `gui::shell::AppShell::new`, old tab UI deleted, 30/30 routes dispatched; commit `d49965d`
 - Phase 5: docs/qa.md checklist (commands, copy-only fixture, flow walk, UI checks, parity); commit `711ac98`
 - Static review found 5 compile errors and 6 save-safety defects; all fixed and re-verified by focused re-review (no remaining findings in the reviewed set)
-- Backend gate empty at every phase; no backend requests logged
-- Compile verification at user request: 99 `cargo check` errors fixed in frontend code (commit `968b06c`); `cargo check`, `cargo clippy --all-targets` and `cargo build` all pass with 0 errors; backend gate still empty
+- Backend source gate empty at every phase; no backend requests logged; manifest exception authorized by user at the end
+- Compile verification at user request: 99 `cargo check` errors fixed in frontend code (commit `968b06c`); unused `egui_extras` dependency removed from Cargo.toml/Cargo.lock at explicit user request (commits `9d32dcb`, `5ec8143`); `cargo check` now 0 errors / 0 warnings; `cargo clippy --all-targets` and `cargo build` pass with 0 errors (clippy still reports style lints, mostly in frozen backend lib code); backend source gate clean
 
 ## Blockers
 None.

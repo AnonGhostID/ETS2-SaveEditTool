@@ -2,11 +2,11 @@
 
 ## 1. Scope and status
 
-- **Compile verification was performed at the user's explicit request after the checklist was written.** `cargo check --manifest-path ets2-tool/src-tauri/Cargo.toml` → 0 errors; `cargo clippy --manifest-path ets2-tool/src-tauri/Cargo.toml --all-targets` → 0 errors; `cargo build --manifest-path ets2-tool/src-tauri/Cargo.toml` → Finished successfully (debug binary at `ets2-tool/src-tauri/target/debug/ets2-tool.exe`). The only remaining warning is `unused dependency egui_extras` in `Cargo.toml`; Cargo manifest is frozen with the backend and was left unchanged.
+- **Compile verification was performed at the user's explicit request after the checklist was written.** `cargo check` → 0 errors, 0 warnings; `cargo build` → Finished successfully (debug binary at `ets2-tool/src-tauri/target/debug/ets2-tool.exe`). The former `unused dependency egui_extras` warning was removed at the user's explicit request (commits `9d32dcb`, `5ec8143`): `egui_extras` was dropped from `Cargo.toml` and `Cargo.lock` regenerated. This is the only authorized change inside the frozen-manifest gate.
 - **Compile fixes:** the initial `cargo check` produced 99 errors, dominated by a macro-hygiene bug (`job` instead of `$job`) in `career.rs::job_row!`, plus shared-helper signature mismatches, a missing `NumExt` import, a moved value, a non-exhaustive match, `modal()` returning `Option<Option<R>>`, and float literal warnings. All were fixed in frontend code (commit `968b06c`); no backend paths were touched. The native app itself has not been launched; runtime verification in §3–§5 remains the user's.
 - Static verification completed while writing this document (no compilation):
   - Branch: `ui-rebuild` (initial static snapshot at `d49965d`; the fixes above landed in later commits).
-  - Backend gate `git diff --stat -- <backend dirs>`: **empty**; the committed range `git diff --stat main...HEAD -- <backend dirs>` is also empty.
+  - Backend source gate `git diff --stat -- <backend dirs excluding Cargo manifest>`: **empty**; the manifest exception above is the only non-frontend diff (`Cargo.toml` −1 line, `Cargo.lock` −103 lines).
   - `docs/parity.md`: **159 distinct `C-000`…`C-159` IDs, all 203 table rows ticked ✓**, including the referenced `U-014 U-015 U-016 U-018 U-019 U-020 U-037 U-038 U-043 U-048` rows. No unticked data row.
   - Old UI removed: no `*_tab.rs` remains under `ets2-tool/src-tauri/src/gui/`; `gui/mod.rs` contains only module declarations plus `pub use shell::AppShell;`.
   - Entry point swapped: `git diff main...HEAD -- ets2-tool/src-tauri/src/main.rs` contains exactly one hunk, `gui::Ets2NativeApp::new(cc, app)` → `gui::shell::AppShell::new(cc, app)` at line 176.
