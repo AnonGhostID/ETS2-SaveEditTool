@@ -3,8 +3,9 @@
 ## 1. Scope and status
 
 - **All verification below is executed by the user.** No sub-agent ran `cargo build`, `cargo test`, `cargo clippy`, `cargo fmt`, or the native app. There is no agent-produced screenshot or test output; the results table in §7 is intentionally empty.
+- **Post-checklist static review:** after this checklist was written, a static review found **5 compile errors and 6 save-safety defects**; all have been fixed in frontend code (commits `13791e7`, `33fa552`, `4523835`, `df3d05b`, `b9e9769`, `b03b8ad`, `3c0a00c`, `55449d2`, plus fleet/settings fixes). No builds or tests were run for those fixes. A focused re-review of the corrected frontend code is in progress. **The user's build remains the authoritative compile check**; record its exact output in §7.
 - Static verification completed while writing this document (no compilation):
-  - Branch: `ui-rebuild` (HEAD `d49965d`).
+  - Branch: `ui-rebuild` (initial static snapshot at `d49965d`; the fixes above landed in later commits).
   - Backend gate `git diff --stat -- <backend dirs>`: **empty**; the committed range `git diff --stat main...HEAD -- <backend dirs>` is also empty.
   - `docs/parity.md`: **159 distinct `C-000`…`C-159` IDs, all 203 table rows ticked ✓**, including the referenced `U-014 U-015 U-016 U-018 U-019 U-020 U-037 U-038 U-043 U-048` rows. No unticked data row.
   - Old UI removed: no `*_tab.rs` remains under `ets2-tool/src-tauri/src/gui/`; `gui/mod.rs` contains only module declarations plus `pub use shell::AppShell;`.
