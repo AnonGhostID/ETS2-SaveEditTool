@@ -84,3 +84,27 @@ Changed `gui/data/garages.rs` model import to `pub use` so Garages/AI Drivers sc
 ## GaragesScreen — Phase 3 fan-out (Operations: Garages & AI Drivers)
 
 Delivered `ets2-tool/src-tauri/src/gui/screens/garages.rs` with the exact `#[derive(Default)] pub struct ScreenState` + `pub fn render(&mut egui::Ui, &mut ScreenState, &mut ScreenCtx<'_>)` contract. Both Operations routes dispatch from `ctx.route`; their GarageList/GarageDetail/GarageWarnings and DriverGenerate/DriverAssign/DriverDismiss sub-views come from a defensive `normalized_sub_view(ctx.route, ctx.sub_view)`, and every sub-view button only enqueues `ShellCommand::Navigate`. Covered audit rows C-054–C-064 and U-038/U-043: background-loaded garage/driver data with filter, five sort keys and per-garage warnings; buy, upgrade, HQ, random resources; strict-sellability sell, sell-empty and buy-all; driver generation with count/assign toggle, targeted assign/reassign/unassign plus random reassignment, and single/multi dismiss. Every destructive action goes through the shared confirm dialog with a staged-edits warning; failures produce inline error state with Retry, an error toast and an Issues opener, and validation failures reach the Validation tab. No backend or shared-component files touched; request/result types and the `update_driver_truck` wrapper come from the data-layer re-exports added by FoundationData. No builds/tests run per instruction. Gate: backend diff empty (exact command in final report).
+
+## SystemScreen — Phase 3 fan-out (System + Overview sectors)
+
+Delivered two files with the exact screen contract (`#[derive(Default)] pub struct ScreenState` + `pub fn render(&mut egui::Ui, &mut ScreenState, &mut ScreenCtx<'_>)`).
+`gui/screens/settings.rs` dispatches `system_paths_data`, `system_logs_diagnostics`
+and `system_about` from `ctx.route` with defensive `normalized_sub_view`, and
+covers path status, confirmed custom-homedir picker / custom path / mode change /
+reset (context Reload goes through the shell's unsaved guard), SQLite info and
+table counts, confirmed force dataset import with summary, log status and a
+level/max-lines filterable log table, diagnostic preview, all three log exports,
+confirmed Clear User Logs, version + status-only language and a last-five
+activity feed. `gui/screens/launcher.rs` dispatches the three Overview routes,
+renders the profile/save/game header, eight deep-linking stat tiles (money, XP,
+level, cities, trucks, trailers, garages, drivers), Current Setup, sector cards,
+staging note, Repair+Refuel, confirmed Max All Skills, Scan Save Health and
+Generate Market Jobs deep links, and a last-five activity feed. All failures
+set inline error/empty/loading/validation states and push error or validation
+toasts plus Issues openers; all destructive actions use the shared confirm
+dialog; navigation is only `ShellCommand::Navigate`. Backend access is limited
+to `crate::gui::data::*` wrappers (no `crate::features`, `crate::commands` or
+`async_runtime` imports). Two shell-API gaps (live events and selected save
+label in `ScreenCtx`) are logged in `docs/foundation-requests.md`; no backend
+requests were needed. No builds/tests run per instruction. Gate: backend diff
+empty (exact command in final report).

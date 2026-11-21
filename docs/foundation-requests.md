@@ -51,3 +51,23 @@ Screen agents append shared-component requests here. Only the foundation agent e
    resolves to the active profile; the old screen passed
    `app.selected_profile_path`. A `context::selected_profile_path` wrapper
    would allow exact parity without state access in the screen.
+
+## SystemScreen (Phase 3 fan-out — settings + launcher)
+
+1. **Recent activity in `ScreenCtx`.** The Overview › Recent Activity tile and
+   System › About both need the shell's last five `NativeEvent`s (U-011 / U-019).
+   `AppShell` drains `app.subscribe_events()` into `recent_events`, but
+   `ScreenCtx` exposes only `data`, `commands`, `route` and `sub_view`; a new
+   subscription created in a screen cannot see events already drained. Until
+   this is exposed, both tiles show the last five persisted user-log entries
+   via `data::system::user_logs_filtered` and link to `IssuesTab::Activity` for
+   the live shell event stream. Please add a read-only slice of
+   `shell.recent_events` to `ScreenCtx` so the tiles can render the true event
+   feed without a second receiver.
+2. **Active save label in `ScreenCtx`.** `context::selected_profile_path` and
+   `context::selected_game` now cover game/profile, but no data wrapper (or
+   `ScreenCtx` field) exposes the selected save path/name. The dashboard header
+   therefore names the sole discovered save when there is exactly one and
+   otherwise says the active save is shown in the Context Column. Adding the
+   selected save path/name to `ScreenCtx` would let the header match the old
+   Dashboard exactly without duplicating the shell's selector state.

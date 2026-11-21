@@ -130,6 +130,7 @@ Every row of `docs/ui-audit.md` must appear here and be ticked by the owning scr
 | Save Data safety | Staged-edit note, Save owned by Safety Spine, no local backup/flush logic | Top bar Save + inline status | All four Save Data tiles (staging note + Issues opener; shell owns Save/Backups/Undo) | ✓ |
 
 ## Operations sector — Garages & AI Drivers (Phase 3 fan-out — `gui/screens/garages.rs`)
+## System sector (Phase 3 fan-out — `gui/screens/settings.rs`)
 
 | Area | Feature | Old location | New location | Done |
 |---|---|---|---|---|
@@ -151,3 +152,39 @@ Every row of `docs/ui-audit.md` must appear here and be ticked by the owning scr
 | Load | U-043 explicit load via `BackgroundLoad` with repaint + Retry | Garages Load button | All Garages/AI Drivers sub-views (`loading_state`, `error_state` Retry) | ✓ |
 | States | Loading / empty / error + Retry and inline validation for every data view | Status toasts and silent empty panels | All Garage/Driver sub-views (`empty_state`, `validation_message`, Issues + toast) | ✓ |
 | Safety | Expected save hash on every mutation; staged count; Save/Backups owned by shell | Inline status + top bar | Detail Pane staged note + confirm warning + Issues opener; shell Safety Spine | ✓ |
+| Paths & Data | C-024 ETS2 data-location status | Settings › Homedir | System › Paths & Data › Paths status (mode, dirs, validation) | ✓ |
+| Paths & Data | C-152 choose custom ETS2 homedir | Settings › Homedir `Browse` | System › Paths & Data › Paths status (Browse, confirmed) | ✓ |
+| Paths & Data | C-153 reset data location to default | Settings › Homedir `Reset` | System › Paths & Data › Paths status (Reset, confirmed) | ✓ |
+| Paths & Data | C-154 set data-location mode (default/custom) | Settings › Homedir mode | System › Paths & Data › Paths status (Use default mode / Set custom path, confirmed) | ✓ |
+| Paths & Data | Custom homedir existence validation and reload guard | Inline status | Inline `validation_message` + `Validation:` toast; context Reload goes through the unsaved prompt | ✓ |
+| Paths & Data | C-025 SQLite info (path, size, tables) | Settings › SQLite | System › Paths & Data › SQLite info | ✓ |
+| Paths & Data | C-026 SQLite table counts | Settings › SQLite | System › Paths & Data › SQLite info (table counts card) | ✓ |
+| Paths & Data | C-155 ETS2 dataset import with summary | Settings › `Re-Import ETS2 Datasets` | System › Paths & Data › Dataset import (confirmed, summary + warnings) | ✓ |
+| Paths & Data | Loading / empty / error + Retry for paths, SQLite and imports | Status toast | `loading_state` / `empty_state` / `error_state` with Retry + Issues error mirror | ✓ |
+| Logs & Diagnostics | C-149 user-log status (path, size, warnings, errors) | Settings › Logs | System › Logs & Diagnostics › User logs | ✓ |
+| Logs & Diagnostics | C-150 level-filtered, line-limited user log list | Settings › Logs | System › Logs & Diagnostics › User logs (level select + max-lines input) | ✓ |
+| Logs & Diagnostics | C-151 diagnostic log preview | Settings › Log preview | System › Logs & Diagnostics › Diagnostic preview | ✓ |
+| Logs & Diagnostics | C-156 export user logs | Settings › `Export User Logs` | System › Logs & Diagnostics › Exports | ✓ |
+| Logs & Diagnostics | C-157 export support log bundle | Settings › `Export Support Log Bundle` | System › Logs & Diagnostics › Exports | ✓ |
+| Logs & Diagnostics | C-158 export diagnostic log file | Settings › `Export Diagnostic Log (.txt)` | System › Logs & Diagnostics › Exports | ✓ |
+| Logs & Diagnostics | C-159 clear user logs, confirmed | Settings › `Clear User Logs` (no confirm) | System › Logs & Diagnostics › User logs (shared confirm dialog) | ✓ |
+| Logs & Diagnostics | Filter validation, error + Retry and Issues mirror | Status toast | `validation_message` + `Validation:` toast, `error_state` with Retry, `OpenIssues(Errors)` | ✓ |
+| About | Version footer and language status indicator (C-002, PP#9 preserved) | Sidebar footer / LANG | System › About (version, language status, read-only notice) | ✓ |
+| About | Recent activity and full event access | Dashboard `RECENT ACTIVITY` | System › About › Recent activity (last five user-log entries + Issues Activity) | ✓ |
+
+## Overview sector (Phase 3 fan-out — `gui/screens/launcher.rs`)
+
+| Area | Feature | Old location | New location | Done |
+|---|---|---|---|---|
+| Dashboard | U-014 profile/save header card | Dashboard header | Overview › Dashboard › Active profile & save | ✓ |
+| Dashboard | U-015 / C-017 / C-019 Current Setup (truck, plate, fuel, wear, trailer, HQ) | Dashboard Current Setup | Overview › Dashboard › Current Setup | ✓ |
+| Dashboard | U-016 eight stat tiles (money, XP, level, cities, trucks, trailers, garages, drivers) | Dashboard clickable tiles | Overview › Dashboard › At a glance — all eight deep-link via `ShellCommand::Navigate` | ✓ |
+| Dashboard | C-033 level derived from XP | Dashboard level tile | Overview › Dashboard (`context::calculate_level`) | ✓ |
+| Dashboard | U-018 OPEN A SCREEN sector cards | Dashboard action cards | Overview › Dashboard › Open a screen (sector default routes) | ✓ |
+| Dashboard | U-020 staging reminder and backup visibility | Dashboard footer | Overview › Dashboard › Staging (live staged count; Safety Spine owns Save/Backups) | ✓ |
+| Quick Actions | C-028 / C-029 Repair + Refuel Truck | Dashboard quick action | Overview › Quick Actions (both wrappers, staged outcome toast) | ✓ |
+| Quick Actions | C-030 Max All Skills, confirmed | Dashboard quick action (no confirm) | Overview › Quick Actions (shared confirm dialog + per-skill error reporting) | ✓ |
+| Quick Actions | C-031 Scan Save Health deep link | Dashboard quick action | Overview › Quick Actions → Safety › Save Health › Scan | ✓ |
+| Quick Actions | C-032 Generate Market Jobs deep link | Dashboard quick action | Overview › Quick Actions → Operations › Dispatcher › Generation | ✓ |
+| Recent Activity | U-019 last five events + error surfacing | Dashboard `RECENT ACTIVITY` | Overview › Recent Activity (last five persisted log entries + Issues Activity, error + Retry) | ✓ |
+| Overview states | Loading / empty / error + Retry for header, stats, setup, quick actions and activity | Status toasts | `loading_state` / `empty_state` / `error_state` with Retry + Issues opener on every data view | ✓ |
