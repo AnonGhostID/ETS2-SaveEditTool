@@ -168,3 +168,7 @@ Updated `gui/components.rs`: added `button_with_id` (explicit widget id; egui 0.
 ## FoundationFinal — static-defect follow-up
 
 Removed unsupported `RichText::wrap()` calls in `gui/shell/issues_drawer.rs` (user-log, activity payload, list rows) and `gui/shell/safety_spine.rs`; the Sector Map tile uses `Button::wrap_mode(TextWrapMode::Wrap)` instead. `AppShell::new` now initializes `selected_game` from `data::context::selected_game` (fallback `"ets2"`) and `refresh_context` no longer calls `set_game`, so persisted ATS survives. `refresh_safety` calls `undo_status` once and handles `Err` with disabled Undo plus an error toast/Issues entry. Undo focus return now captures the button's real `Response::id`. Added `ShellCommand::RefreshSafety`, handled by `refresh_safety()`, and moved Issues drawer rendering before the Detail Pane. `docs/components.md` updated. No screen files, data wrappers, backend paths, builds or tests touched. Backend gate empty (exact command in final report).
+
+## FixMods — RefreshSafety after sandbox apply
+
+`gui/screens/mods.rs:811` now pushes `ShellCommand::RefreshSafety` after a successful `apply_sandbox` (`apply_sandbox_to_active_profile`) result, so the Safety Spine backup/staged/outcome gauges refresh. Confirm-dialog handling unchanged; no other behavior touched. Forbidden-import grep under `gui/screens/` empty; backend gate empty. No builds/tests run.

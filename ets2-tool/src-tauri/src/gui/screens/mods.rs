@@ -808,6 +808,7 @@ fn execute(operation: Operation, state: &mut ScreenState, ctx: &mut ScreenCtx<'_
                 );
                 state.sandbox_message = Some(message.clone());
                 if result.success {
+                    ctx.commands.push(ShellCommand::RefreshSafety);
                     info(ctx, message);
                 } else {
                     error(ctx, message);
