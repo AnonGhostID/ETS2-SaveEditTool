@@ -152,3 +152,7 @@ a fallback when the shell feed is empty, with loading/empty/error/Retry intact.
 same fallback. Activity fallback loading is scheduled only when the shell feed
 is empty. No parity rows, confirmations or other behavior changed; no
 shared-file edits beyond this note. No builds/tests run. Gate: backend diff empty.
+
+## IntegrationAgent — Phase 4 integration (Steps A + B)
+
+Wired the new render root: `main.rs:176` now constructs `gui::shell::AppShell::new(cc, app)`; this is the only change to `main.rs` (initialize_backend, state setup, viewport options and shutdown untouched). Reduced `gui/mod.rs` to module declarations only (`components`, `data`, `screens`, `shell`, `theme`) plus `pub use shell::AppShell;` — no WorkspaceTab/SubTab enums, no Ets2NativeApp, no render functions or old router remain. Deleted the eight legacy tab modules (`career_tab`, `coaches_tab`, `garages_tab`, `mods_tab`, `profile_tools_tab`, `save_editor_tab`, `settings_tab`, `vehicles_tab`). Crate-wide grep for `Ets2NativeApp|WorkspaceTab|VehiclesSubTab|CareerSubTab|ModsSubTab|ProfileToolsSubTab|PendingTopBarAction|gui::*_tab|mod <old_tab>` returned no matches. AppShell reachable from main.rs; all 30 snake_case Route variants dispatched through `gui/shell/detail_pane.rs::dispatch`. No builds/tests/clippy/fmt run (per assignment). Backend gate empty.

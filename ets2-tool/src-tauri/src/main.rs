@@ -173,7 +173,7 @@ fn main() {
     let run_result = eframe::run_native(
         "Save-Edit Tool",
         native_options,
-        Box::new(move |cc| Ok(Box::new(gui::Ets2NativeApp::new(cc, app)))),
+        Box::new(move |cc| Ok(Box::new(gui::shell::AppShell::new(cc, app)))),
     );
 
     if let Some(state) = app_for_shutdown.try_state::<state::DiagnosticsState>() {
