@@ -1,7 +1,8 @@
 //! VTC / account and authentication wrappers (audit rows 76-78, 88-90).
 
 use crate::features::auth::models::AuthLoginResult;
-use crate::features::vtc::models::{CompanyMember, CompanyOverview, CreateCompanyInput, UserProfile};
+pub use crate::features::vtc::models::CreateCompanyInput;
+use crate::features::vtc::models::{CompanyMember, CompanyOverview, UserProfile};
 use crate::state::AuthState;
 
 use super::{map_error, DataContext, UiError};

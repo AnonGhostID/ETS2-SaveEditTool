@@ -14,7 +14,7 @@ use crate::models::trucks::ParsedTruck;
 use crate::state::{AppProfileState, DecryptCache, ProfileCache};
 use crate::xp::command::LevelProgress;
 
-use super::{map_error, DataContext, UiError};
+use super::{map_error, ui_error, DataContext, UiError};
 
 pub fn available_languages(ctx: &DataContext) -> Vec<LanguageInfo> {
     crate::features::language::commands::get_available_languages_command(ctx.app.clone())
@@ -32,10 +32,31 @@ pub fn set_game(ctx: &DataContext, game: String) -> Result<(), UiError> {
     .map(|_| ())
 }
 
+/// Active game from the context column selector.
+pub fn selected_game(ctx: &DataContext) -> Result<String, UiError> {
+    let state = ctx.app.state::<AppProfileState>();
+    state
+        .selected_game
+        .lock()
+        .map(|game| game.clone())
+        .map_err(|_| ui_error("AppProfileState selected_game lock poisoned"))
+}
+
 pub fn find_profiles(ctx: &DataContext) -> Vec<ProfileInfo> {
     crate::features::profile_manager::commands::find_ets2_profiles(
         ctx.app.state::<AppProfileState>(),
     )
+}
+
+/// Active profile path from `AppProfileState::current_profile`.
+pub fn selected_profile_path(ctx: &DataContext) -> Result<String, UiError> {
+    let state = ctx.app.state::<AppProfileState>();
+    state
+        .current_profile
+        .lock()
+        .map_err(|_| ui_error("AppProfileState current_profile lock poisoned"))?
+        .clone()
+        .ok_or_else(|| ui_error("No profile selected"))
 }
 
 pub fn read_last_profile(ctx: &DataContext) -> Result<Option<String>, UiError> {
