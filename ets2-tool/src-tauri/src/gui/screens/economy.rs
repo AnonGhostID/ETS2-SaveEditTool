@@ -314,6 +314,7 @@ pub struct ScreenState {
     level_input: i64,
     batch_level_edited_last: bool,
     economy_validation: String,
+    economy_error_line: String,
     economy_message: String,
     reset_validation: String,
 
