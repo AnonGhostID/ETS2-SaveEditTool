@@ -82,7 +82,7 @@ pub fn set_active_profile(ctx: &DataContext, profile_path: String) -> Result<(),
     ))
 }
 
-pub fn find_saves(ctx: &DataContext, profile_path: String) -> Result<Vec<SaveInfo>, UiError> {
+pub fn find_saves(_ctx: &DataContext, profile_path: String) -> Result<Vec<SaveInfo>, UiError> {
     map_error(crate::tauri::async_runtime::block_on(
         crate::features::profile_manager::commands::find_profile_saves(profile_path),
     ))

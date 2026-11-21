@@ -9,7 +9,7 @@ pub use feedback::*;
 pub use form::*;
 
 use eframe::egui::{
-    self, Align2, Color32, FontId, Frame, Margin, Response, RichText, Rounding, Sense, Stroke, Ui,
+    self, Align2, Color32, FontId, Frame, Margin, NumExt, Response, RichText, Rounding, Sense, Stroke, Ui,
 };
 
 use super::theme;

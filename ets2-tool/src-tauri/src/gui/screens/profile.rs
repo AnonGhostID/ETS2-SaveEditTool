@@ -1415,7 +1415,7 @@ fn render_health(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx
                         if let Some(fix_id) = problem.fix_id.clone() {
                             if comp::button(ui, "Apply auto-fix").clicked() {
                                 state.health_fix_candidate =
-                                    Some((fix_id, problem.title.clone()));
+                                    Some((fix_id.clone(), problem.title.clone()));
 
                                 navigate(Route::safety_save_health, SubView::HealthFix, ctx);
                                 state.confirm(
@@ -1467,6 +1467,7 @@ fn render_health(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx
                 }
             });
         }
+        _ => {}
     }
 }
 

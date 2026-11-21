@@ -17,7 +17,7 @@ pub fn render_expanded(shell: &mut AppShell, ctx: &egui::Context) {
             egui::Frame::none()
                 .fill(theme::SIDEBAR)
                 .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                .stroke(egui::Stroke::new(1.0, theme::BORDER)),
+                .stroke(egui::Stroke::new(1.0_f32, theme::BORDER)),
         )
         .show(ctx, |ui| render_body(shell, ui, ctx, false));
 }
@@ -30,7 +30,7 @@ pub fn render_compact(shell: &mut AppShell, ctx: &egui::Context) {
             egui::Frame::none()
                 .fill(theme::SIDEBAR)
                 .inner_margin(egui::Margin::symmetric(8.0, 3.0))
-                .stroke(egui::Stroke::new(1.0, theme::BORDER)),
+                .stroke(egui::Stroke::new(1.0_f32, theme::BORDER)),
         )
         .show(ctx, |ui| render_body(shell, ui, ctx, true));
 }

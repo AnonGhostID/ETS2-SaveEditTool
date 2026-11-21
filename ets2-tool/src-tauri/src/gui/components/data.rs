@@ -64,7 +64,7 @@ pub fn section_card<R>(
 pub fn compact_stat_tile(ui: &mut Ui, label: &str, value: &str, accent: Color32) -> egui::Response {
     let response = egui::Frame::none()
         .fill(theme::SURFACE)
-        .stroke(egui::Stroke::new(1.0, theme::BORDER))
+        .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
         .rounding(egui::Rounding::same(8.0))
         .inner_margin(egui::Margin::symmetric(10.0, 8.0))
         .show(ui, |ui| {
@@ -80,7 +80,7 @@ pub fn compact_stat_tile(ui: &mut Ui, label: &str, value: &str, accent: Color32)
 pub fn status_gauge(ui: &mut Ui, label: &str, value: &str, detail: &str, accent: Color32) {
     egui::Frame::none()
         .fill(theme::SURFACE)
-        .stroke(egui::Stroke::new(1.0, theme::BORDER))
+        .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
         .rounding(egui::Rounding::same(8.0))
         .inner_margin(egui::Margin::symmetric(9.0, 7.0))
         .show(ui, |ui| {

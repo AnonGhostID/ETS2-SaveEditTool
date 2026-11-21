@@ -73,38 +73,38 @@ macro_rules! job_row {
     ($job:expr) => {{
         let status = format!(
             "{} ({})",
-            job.status,
-            job.ets2_job_link_status.as_deref().unwrap_or("-")
+            $job.status,
+            $job.ets2_job_link_status.as_deref().unwrap_or("-")
         );
         let detail = JobDetailView {
-            heading: format!("{} → {}", job.origin_city, job.destination_city),
+            heading: format!("{} → {}", $job.origin_city, $job.destination_city),
             summary: format!(
                 "{} · {} ({:.0} kg) · {:.0} km · ~{} min",
-                job.company_name,
-                job.cargo_type,
-                job.cargo_mass_kg,
-                job.distance_km,
-                job.estimated_duration_minutes
+                $job.company_name,
+                $job.cargo_type,
+                $job.cargo_mass_kg,
+                $job.distance_km,
+                $job.estimated_duration_minutes
             ),
             fields: vec![
                 (
                     "Reward".to_string(),
-                    format!("€{} (profit est. €{})", job.total_reward, job.profit_estimate),
+                    format!("€{} (profit est. €{})", $job.total_reward, $job.profit_estimate),
                 ),
                 (
                     "Rate".to_string(),
-                    format!("€{:.2}/km", job.calculated_rate_per_km),
+                    format!("€{:.2}/km", $job.calculated_rate_per_km),
                 ),
                 (
                     "Urgency / Difficulty".to_string(),
-                    format!("{} / {}", job.urgency_level, job.difficulty_level),
+                    format!("{} / {}", $job.urgency_level, $job.difficulty_level),
                 ),
                 (
                     "Equipment".to_string(),
                     format!(
                         "{}{}",
-                        job.equipment_type_required,
-                        job.trailer_type_required
+                        $job.equipment_type_required,
+                        $job.trailer_type_required
                             .as_deref()
                             .map(|trailer| format!(" ({trailer})"))
                             .unwrap_or_default()
@@ -114,44 +114,44 @@ macro_rules! job_row {
                     "Status".to_string(),
                     format!(
                         "{} ({})",
-                        job.status,
-                        job.ets2_job_link_status.as_deref().unwrap_or("-")
+                        $job.status,
+                        $job.ets2_job_link_status.as_deref().unwrap_or("-")
                     ),
                 ),
                 (
                     "Expires".to_string(),
-                    job.expires_at_utc.as_deref().unwrap_or("-").to_string(),
+                    $job.expires_at_utc.as_deref().unwrap_or("-").to_string(),
                 ),
             ],
-            risk: job.risk_note.clone(),
-            bonus: job.bonus_note.clone(),
-            last_error: job.last_error_message.clone(),
+            risk: $job.risk_note.clone(),
+            bonus: $job.bonus_note.clone(),
+            last_error: $job.last_error_message.clone(),
             status: format!(
                 "{} ({})",
-                job.status,
-                job.ets2_job_link_status.as_deref().unwrap_or("-")
+                $job.status,
+                $job.ets2_job_link_status.as_deref().unwrap_or("-")
             ),
         };
         JobRow {
-            id: job.id.clone(),
+            id: $job.id.clone(),
             cells: vec![
-                job.company_name.clone(),
+                $job.company_name.clone(),
                 format!(
                     "{} ({}) → {} ({})",
-                    job.origin_city,
-                    job.origin_country,
-                    job.destination_city,
-                    job.destination_country
+                    $job.origin_city,
+                    $job.origin_country,
+                    $job.destination_city,
+                    $job.destination_country
                 ),
-                format!("{} ({:.0} kg)", job.cargo_type, job.cargo_mass_kg),
-                format!("{:.0} km", job.distance_km),
-                format!("€{:.2}", job.calculated_rate_per_km),
-                format!("€{}", job.total_reward),
+                format!("{} ({:.0} kg)", $job.cargo_type, $job.cargo_mass_kg),
+                format!("{:.0} km", $job.distance_km),
+                format!("€{:.2}", $job.calculated_rate_per_km),
+                format!("€{}", $job.total_reward),
                 status.clone(),
             ],
-            reward: job.total_reward,
-            distance: job.distance_km,
-            rate: job.calculated_rate_per_km,
+            reward: $job.total_reward,
+            distance: $job.distance_km,
+            rate: $job.calculated_rate_per_km,
             detail,
         }
     }};
@@ -311,13 +311,13 @@ fn schedule(state: &mut ScreenState, op: Operation, label: &'static str) {
 fn confirm_action(
     state: &mut ScreenState,
     title: &'static str,
-    message: String,
+    message: impl Into<String>,
     confirm_text: &'static str,
     action: Operation,
 ) {
     state.confirm = Some(Confirm {
         title,
-        message,
+        message: message.into(),
         confirm_text,
         action,
     });

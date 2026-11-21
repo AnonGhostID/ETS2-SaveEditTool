@@ -16,7 +16,7 @@ pub fn render(shell: &mut AppShell, ctx: &egui::Context, compact: bool) {
             egui::Frame::none()
                 .fill(theme::BG)
                 .inner_margin(egui::Margin::symmetric(10.0, 10.0))
-                .stroke(egui::Stroke::new(1.0, theme::BORDER)),
+                .stroke(egui::Stroke::new(1.0_f32, theme::BORDER)),
         )
         .show(ctx, |ui| render_body(shell, ui, compact));
 }

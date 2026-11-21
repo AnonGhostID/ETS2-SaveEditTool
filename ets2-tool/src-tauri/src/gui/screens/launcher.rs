@@ -150,7 +150,7 @@ pub struct ScreenState {
 
 impl ScreenState {
     fn schedule(&mut self, operation: Operation, message: &'static str) {
-        self.pending = Some(operation);
+        self.pending = Some(operation.clone());
         self.loading = Some(message);
         self.last_action = Some(operation);
     }
@@ -908,14 +908,14 @@ fn collect_count<T>(
     }
 }
 
-fn collect_string(
-    result: Result<String, crate::gui::data::UiError>,
+fn collect_string<E: ToString>(
+    result: Result<String, E>,
     failures: &mut Vec<String>,
 ) -> Option<String> {
     match result {
         Ok(value) => Some(value),
         Err(err) => {
-            failures.push(err.message);
+            failures.push(err.to_string());
             None
         }
     }

@@ -56,7 +56,7 @@ pub fn toast_stack(ctx: &egui::Context, toasts: &mut VecDeque<Toast>) {
                 for (index, toast) in toasts.iter().enumerate() {
                     egui::Frame::none()
                         .fill(theme::SURFACE)
-                        .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                        .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
                         .rounding(egui::Rounding::same(8.0))
                         .inner_margin(egui::Margin::symmetric(12.0, 8.0))
                         .show(ui, |ui| {
@@ -92,11 +92,12 @@ pub fn loading_state(ui: &mut Ui, message: &str) {
 
 /// Generic error card with an optional Retry button. Callers must also append
 /// the message to the Issues drawer; an error is never toast-only.
-pub fn error_state(ui: &mut Ui, message: &str, retry_label: Option<&str>) -> bool {
+pub fn error_state(ui: &mut Ui, message: impl AsRef<str>, retry_label: Option<&str>) -> bool {
+    let message = message.as_ref();
     let mut retry = false;
     egui::Frame::none()
         .fill(theme::SURFACE)
-        .stroke(egui::Stroke::new(1.0, theme::DANGER))
+        .stroke(egui::Stroke::new(1.0_f32, theme::DANGER))
         .rounding(egui::Rounding::same(8.0))
         .inner_margin(egui::Margin::same(12.0))
         .show(ui, |ui| {
@@ -122,7 +123,7 @@ pub fn modal<R>(
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .show(ctx, add_contents)
-        .map(|response| response.inner)
+        .and_then(|response| response.inner)
 }
 
 /// Stable focus id for overlay control `index` (zero-based, visual order).
