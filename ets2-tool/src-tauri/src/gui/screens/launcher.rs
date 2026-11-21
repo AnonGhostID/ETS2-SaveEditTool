@@ -189,8 +189,11 @@ pub fn render(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx<'_
     });
     ui.add_space(4.0);
 
-    if !state.header_tried && !state.facts_tried && !state.activity_tried && state.pending.is_none() {
+    if !state.header_tried && !state.facts_tried && state.pending.is_none() {
         state.schedule(Operation::RefreshAll, "Loading dashboard…");
+    }
+    if ctx.recent_events.is_empty() && !state.activity_tried && state.pending.is_none() {
+        state.schedule(Operation::RefreshActivity, "Reading recent activity…");
     }
     if let Some(message) = state.loading {
         comp::loading_state(ui, message);
@@ -479,10 +482,34 @@ fn render_quick_actions(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut Sc
 }
 
 fn render_activity(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx<'_>) {
+    let shell_rows: Vec<Vec<String>> = ctx
+        .recent_events
+        .iter()
+        .rev()
+        .take(5)
+        .map(|(event, payload)| vec![event.clone(), payload.clone()])
+        .collect();
+    let using_shell_events = !shell_rows.is_empty();
     comp::section_card(ui, "Recent activity", |ui| {
         if comp::button(ui, "Open full activity").clicked() {
             ctx.commands
                 .push(ShellCommand::OpenIssues(IssuesTab::Activity));
+        }
+        if using_shell_events {
+            comp::table(
+                ui,
+                "overview_recent_activity",
+                &["Event", "Payload"],
+                &shell_rows,
+                None,
+            );
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new("Live shell events (last five).")
+                    .size(10.5)
+                    .color(theme::MUTED),
+            );
+            return;
         }
         if let Some(message) = state.activity_error.clone() {
             if comp::error_state(ui, message, Some("Retry")) {
@@ -501,7 +528,7 @@ fn render_activity(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenC
             comp::empty_state(
                 ui,
                 "No activity recorded",
-                "Recent log entries appear here; live shell events are in the Issues drawer.",
+                "No shell events or user-log entries yet.",
             );
             return;
         }
@@ -520,7 +547,7 @@ fn render_activity(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenC
         ui.add_space(4.0);
         ui.label(
             egui::RichText::new(
-                "This feed mirrors the last five persisted user-log entries; the Issues drawer carries the live shell event stream.",
+                "The shell event feed is empty; showing the last five persisted user-log entries.",
             )
             .size(10.5)
             .color(theme::MUTED),
@@ -558,7 +585,6 @@ fn execute(operation: Operation, state: &mut ScreenState, ctx: &mut ScreenCtx<'_
         Operation::RefreshAll => {
             refresh_header(state, ctx);
             refresh_facts(state, ctx);
-            refresh_activity(state, ctx);
         }
         Operation::RefreshHeader => refresh_header(state, ctx),
         Operation::RefreshFacts => refresh_facts(state, ctx),
@@ -624,6 +650,7 @@ fn refresh_header(state: &mut ScreenState, ctx: &mut ScreenCtx<'_>) {
                 Ok(value) if !value.is_empty() => value,
                 _ => "—".to_string(),
             };
+            let active_save_label = ctx.active_save_label.trim().to_string();
             let profile_name = profiles
                 .iter()
                 .find(|profile| profile.path == path)
@@ -636,23 +663,18 @@ fn refresh_header(state: &mut ScreenState, ctx: &mut ScreenCtx<'_>) {
                     error(ctx, err.message);
                 }
                 Ok(saves) => {
-                    let save_label = match saves.len() {
-                        0 => "No save found for this profile".to_string(),
-                        1 => saves[0]
-                            .name
-                            .clone()
-                            .filter(|name| !name.is_empty())
-                            .unwrap_or_else(|| saves[0].folder.clone()),
-                        count => format!(
-                            "{count} saves found — active save is shown in the Context Column"
-                        ),
+                    let save_label = if active_save_label.is_empty() {
+                        "No save selected — choose Game, Profile and Save in the Context Column"
+                            .to_string()
+                    } else {
+                        active_save_label
                     };
                     state.header = Some(HeaderView {
                         lines: vec![
                             format!("Game · {game}"),
                             format!("Profile · {profile_name}"),
                             format!("Save slot · {save_label}"),
-                            format!("Profiles discovered: {}", profiles.len()),
+                            format!("Profiles: {} · Saves: {}", profiles.len(), saves.len()),
                         ],
                     });
                     state.header_error = None;

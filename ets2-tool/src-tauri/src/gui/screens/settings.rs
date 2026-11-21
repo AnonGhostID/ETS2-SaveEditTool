@@ -245,6 +245,9 @@ pub fn render(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx<'_
     if !state.paths_tried && !state.logs_tried && state.pending.is_none() {
         state.schedule(Operation::RefreshAll, "Loading system status…");
     }
+    if ctx.recent_events.is_empty() && !state.about_activity_tried && state.pending.is_none() {
+        state.schedule(Operation::RefreshAboutActivity, "Reading recent activity…");
+    }
     if let Some(message) = state.loading {
         comp::loading_state(ui, message);
     }
@@ -671,6 +674,14 @@ fn render_about(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx<
             open_issues(ctx, IssuesTab::Errors);
         }
     });
+    let shell_rows: Vec<Vec<String>> = ctx
+        .recent_events
+        .iter()
+        .rev()
+        .take(5)
+        .map(|(event, payload)| vec![event.clone(), payload.clone()])
+        .collect();
+    let using_shell_events = !shell_rows.is_empty();
     ui.add_space(8.0);
     comp::section_card(ui, "Recent activity", |ui| {
         if comp::button(ui, "Refresh activity").clicked() {
@@ -678,6 +689,22 @@ fn render_about(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx<
         }
         if comp::button(ui, "Open full activity").clicked() {
             open_issues(ctx, IssuesTab::Activity);
+        }
+        if using_shell_events {
+            comp::table(
+                ui,
+                "about_recent_activity",
+                &["Event", "Payload"],
+                &shell_rows,
+                None,
+            );
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new("Live shell events (last five).")
+                    .size(10.5)
+                    .color(theme::MUTED),
+            );
+            return;
         }
         if let Some(message) = state.about_activity_error.clone() {
             if comp::error_state(ui, message, Some("Retry")) {
@@ -692,7 +719,7 @@ fn render_about(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx<
             comp::empty_state(
                 ui,
                 "No activity recorded",
-                "The last five user-log entries appear here; the Issues drawer carries live events.",
+                "No shell events or user-log entries yet.",
             );
             return;
         }
@@ -720,7 +747,6 @@ fn execute(operation: Operation, state: &mut ScreenState, ctx: &mut ScreenCtx<'_
             refresh_sqlite(state, ctx);
             refresh_logs(state, ctx);
             refresh_preview(state, ctx);
-            refresh_about_activity(state, ctx);
         }
         Operation::RefreshPaths => refresh_paths(state, ctx),
         Operation::RefreshSqlite => refresh_sqlite(state, ctx),

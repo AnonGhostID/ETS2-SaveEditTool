@@ -116,3 +116,39 @@ Delivered `ets2-tool/src-tauri/src/gui/screens/fleet.rs` (~2,620 lines) with the
 ## FoundationFinal — final foundation pass
 
 Updated `gui/components.rs`: added `button_with_id` (explicit widget id; egui 0.29 has no `Button::id`), switched `confirm_dialog` to `modal_focus_id(0)` confirm / `modal_focus_id(1)` cancel and Escape-to-cancel without changing its signature or callers. Added read-only `recent_events` (last five shell events) and `active_save_label` to `ScreenCtx` and populated both at the sole construction site in `gui/shell/detail_pane.rs` (contiguous `VecDeque` slice, no cloning; label from the selected save's option or path). Exact opener capture is not possible with egui 0.29's public API (mouse clicks do not set `Memory::focused()` and no last-clicked widget id is exposed), so existing best-effort shell focus restoration stays; limitation documented in `docs/components.md`. No builds/tests run per instruction. Backend gate empty (exact command in final report).
+
+## SystemScreen — Phase 3 fan-out (System + Overview sectors)
+
+Delivered two files with the exact screen contract (`#[derive(Default)] pub struct ScreenState` + `pub fn render(&mut egui::Ui, &mut ScreenState, &mut ScreenCtx<'_>)`).
+`gui/screens/settings.rs` dispatches `system_paths_data`, `system_logs_diagnostics`
+and `system_about` from `ctx.route` with defensive `normalized_sub_view`, and
+covers path status, confirmed custom-homedir picker / custom path / mode change /
+reset (context Reload goes through the shell's unsaved guard), SQLite info and
+table counts, confirmed force dataset import with summary, log status and a
+level/max-lines filterable log table, diagnostic preview, all three log exports,
+confirmed Clear User Logs, version + status-only language and a last-five
+activity feed. `gui/screens/launcher.rs` dispatches the three Overview routes,
+renders the profile/save/game header, eight deep-linking stat tiles (money, XP,
+level, cities, trucks, trailers, garages, drivers), Current Setup, sector cards,
+staging note, Repair+Refuel, confirmed Max All Skills, Scan Save Health and
+Generate Market Jobs deep links, and a last-five activity feed. All failures
+set inline error/empty/loading/validation states and push error or validation
+toasts plus Issues openers; all destructive actions use the shared confirm
+dialog; navigation is only `ShellCommand::Navigate`. Backend access is limited
+to `crate::gui::data::*` wrappers (no `crate::features`, `crate::commands` or
+`async_runtime` imports). Two shell-API gaps (live events and selected save
+label in `ScreenCtx`) are logged in `docs/foundation-requests.md`; no backend
+requests were needed. No builds/tests run per instruction. Gate: backend diff
+empty (exact command in final report).
+
+## SystemScreen — follow-up (FoundationFinal ScreenCtx fields adopted)
+
+Adopted the read-only `ScreenCtx` fields from `4603553` in both owned files.
+`launcher.rs` now renders `ctx.recent_events` (newest first, last five) in
+Overview › Recent Activity and uses `ctx.active_save_label` for the dashboard
+header, removing the sole-save guess; the persisted user-log feed is now only
+a fallback when the shell feed is empty, with loading/empty/error/Retry intact.
+`settings.rs` About › Recent activity uses the same shell feed first with the
+same fallback. Activity fallback loading is scheduled only when the shell feed
+is empty. No parity rows, confirmations or other behavior changed; no
+shared-file edits beyond this note. No builds/tests run. Gate: backend diff empty.
