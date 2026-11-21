@@ -92,6 +92,10 @@ pub struct ScreenCtx<'a> {
     // Shell-owned, read-only for screens:
     pub route: Route,
     pub sub_view: SubView,
+    /// Last five shell events, newest last (allocated by the shell each frame).
+    pub recent_events: &'a [(String, String)],
+    /// Selected save's display label, falling back to its path; "" if none.
+    pub active_save_label: &'a str,
 }
 
 `route` and `sub_view` are assigned by `gui/shell/detail_pane.rs::dispatch`
@@ -215,24 +219,34 @@ remain source-compatible for the old tab files until Phase 4 deletes them.
 | `toast_stack` | `(&egui::Context, &mut VecDeque<Toast>)` | 5 s info / 10 s error, max 4, manual dismiss |
 | `push_toast` | `(&mut VecDeque<Toast>, impl Into<String>, bool)` | dedupe + cap |
 | `modal` | `(&egui::Context, &str, impl FnOnce(&mut Ui)->R) -> Option<R>` | centred non-resizable overlay |
-| `confirm_dialog` | `(&egui::Context, &str, &str, &str, &str) -> Option<bool>` | legacy two-button confirm, still available |
+| `button_with_id` | `(&mut Ui, egui::Id, &str, bool) -> Response` | button with an exact widget id (egui 0.29 has no `Button::id`); confirm dialog uses it for modal focus slots |
+| `confirm_dialog` | `(&egui::Context, &str, &str, &str, &str) -> Option<bool>` | legacy two-button confirm; confirm id = `modal_focus_id(0)`, cancel id = `modal_focus_id(1)`, Escape = cancel |
 | `modal_focus_id` | `(usize) -> egui::Id` | focus id for overlay control `index` |
 | `trap_focus_step` | `(&egui::Context) -> i32` | consumes Tab/Shift+Tab; returns focus step |
 
-Overlay buttons must be wrapped as
-`ui.push_id(components::modal_focus_id(index), |ui| components::button(ui, "…"))`
-so `AppShell::handle_tabs` can cycle focus and Escape can close/cancel.
+Overlay buttons that need an exact focus target must use
+`components::button_with_id(ui, components::modal_focus_id(index), "…", primary)`
+because egui 0.29's `Button` builder has no `id` setter and `ui.push_id`
+salts the generated id with the enclosing `Ui` stack. Shell overlays still
+use `ui.push_id(components::modal_focus_id(index), …)` and therefore retain
+their pre-existing focus-target mismatch; only the shared `confirm_dialog`
+uses exact ids now.
 
-Screen-owned modals (e.g. `components::confirm_dialog` called from
-`gui/screens/profile.rs`) are detected by `AppShell::screen_modal_visible`:
-any visible `Order::Middle` egui layer other than the shell's own layers
-(`Unsaved changes`, `Confirm undo`, `Context`, and the toast Areas) is treated
-as a screen modal.
-While one is open, `AppShell::handle_tabs` consumes Tab/Shift+Tab and cycles
-the two modal focus slots (`modal_focus_id(0/1)`); on close it restores the
-focus captured when the modal appeared (spec §2.3). A screen that needs an
-explicit opener id should have the shared component register it — see the
-residual request in `docs/foundation-requests.md`.
+`components::confirm_dialog` (the root dialog and all screen-owned dialogs)
+interacts with `modal_focus_id(0)` for confirm and `modal_focus_id(1)` for
+cancel, so `AppShell::handle_tabs` can target them. Escape while the dialog
+is open returns `Some(false)` (cancel); the return type and all call sites
+are unchanged.
+
+Screen-owned dialogs are still detected from visible `Order::Middle` egui
+layers. While one is open, `AppShell::handle_tabs` consumes Tab/Shift+Tab
+and cycles the two slots. **Focus-restoration limitation:** egui 0.29 does
+not expose the most recently clicked/interested widget id publicly and a
+mouse click does not set `Memory::focused()`, so the shell can only capture
+whatever was focused when the modal was detected. Exact restoration needs
+the opening screen to announce its opener id, which requires screen-side
+cooperation and is outside the foundation component's ownership; no
+workaround is invented here. The best-effort shell detection is retained.
 
 Loading/empty/error contract: every data view renders `loading_state` while
 loading, `empty_state` when the backend returns no rows, and `error_state`

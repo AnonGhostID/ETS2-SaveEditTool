@@ -105,6 +105,63 @@ pub fn primary_button(ui: &mut Ui, text: &str) -> Response {
     )
 }
 
+/// A button whose widget id is exactly `id`.
+///
+/// egui 0.29 has no `Button::id`, and `ui.push_id` salts the generated id with
+/// the enclosing `Ui` stack, so `Memory::request_focus(modal_focus_id(n))`
+/// cannot reach a pushed button. This mirrors the relevant part of egui's
+/// `Button::ui` but interacts with the supplied id directly. Overlay code
+/// should use this helper whenever focus must land on a known id.
+pub fn button_with_id(ui: &mut Ui, id: egui::Id, text: &str, primary: bool) -> Response {
+    let widget_text: egui::WidgetText = if primary {
+        RichText::new(text).size(12.5).color(theme::ON_ACCENT).into()
+    } else {
+        RichText::new(text).size(12.5).into()
+    };
+    let galley = widget_text.into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Button,
+    );
+    let padding = ui.spacing().button_padding;
+    let mut size = galley.size() + 2.0 * padding;
+    size.y = size.y.at_least(ui.spacing().interact_size.y);
+    if primary {
+        size.y = size.y.at_least(30.0);
+    }
+    let (rect, _) = ui.allocate_at_least(size, Sense::hover());
+    let response = ui.interact(rect, id, Sense::click());
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.style().interact(&response);
+        let (fill, stroke, rounding, text_color) = if primary {
+            (
+                theme::ACCENT,
+                Stroke::NONE,
+                Rounding::same(7.0),
+                theme::ON_ACCENT,
+            )
+        } else {
+            (
+                visuals.weak_bg_fill,
+                visuals.bg_stroke,
+                visuals.rounding,
+                visuals.text_color(),
+            )
+        };
+        ui.painter()
+            .rect(rect.expand(visuals.expansion), rounding, fill, stroke);
+        ui.painter().galley(
+            ui.layout()
+                .align_size_within_rect(galley.size(), rect.shrink2(padding))
+                .min,
+            galley,
+            text_color,
+        );
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// Segmented sub-navigation. Returns the newly selected tab, if any.
 pub fn sub_tabs<T: Copy + PartialEq>(ui: &mut Ui, current: T, items: &[(T, &str)]) -> Option<T> {
     let mut next = None;
@@ -243,8 +300,11 @@ pub fn status_dot(ui: &mut Ui, color: Color32) {
 }
 
 /// Centered two-button confirmation dialog. Call each frame while the
-/// dialog is open; returns `Some(true)` when the confirm button is
-/// pressed, `Some(false)` for cancel, `None` while still open.
+/// dialog is open; returns `Some(true)` when the confirm button is pressed,
+/// `Some(false)` for cancel or Escape, `None` while still open.
+///
+/// Both buttons carry the exact ids `modal_focus_id(0)` (confirm) and
+/// `modal_focus_id(1)` (cancel) so shell focus cycling can target them.
 pub fn confirm_dialog(
     ctx: &egui::Context,
     title: &str,
@@ -261,15 +321,16 @@ pub fn confirm_dialog(
             ui.label(message);
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                let confirm = ui.push_id(modal_focus_id(0), |ui| primary_button(ui, confirm_text));
-                if confirm.inner.clicked() {
+                if button_with_id(ui, modal_focus_id(0), confirm_text, true).clicked() {
                     choice = Some(true);
                 }
-                let cancel = ui.push_id(modal_focus_id(1), |ui| ui.button(cancel_text));
-                if cancel.inner.clicked() {
+                if button_with_id(ui, modal_focus_id(1), cancel_text, false).clicked() {
                     choice = Some(false);
                 }
             });
+            if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+                choice = Some(false);
+            }
         });
     choice
 }

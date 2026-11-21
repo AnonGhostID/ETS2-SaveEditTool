@@ -37,6 +37,18 @@ pub fn render(shell: &mut AppShell, ctx: &egui::Context, viewport_width: f32) {
             ui.separator();
             ui.add_space(8.0);
 
+            // VecDeque may wrap; make one contiguous slice so screens can
+            // read the last five events without cloning them each frame.
+            shell.recent_events.make_contiguous();
+            let all_events = shell.recent_events.as_slices().0;
+            let recent_events = &all_events[all_events.len().saturating_sub(5)..];
+            let active_save_label = shell
+                .saves
+                .iter()
+                .find(|option| Some(&option.path) == shell.selected_save_path.as_ref())
+                .map(|option| option.label.as_str())
+                .or_else(|| shell.selected_save_path.as_deref())
+                .unwrap_or("");
             let mut commands: Vec<ShellCommand> = Vec::new();
             let mut scroll = egui::ScrollArea::vertical()
                 .id_salt("detail_scroll")
@@ -50,6 +62,8 @@ pub fn render(shell: &mut AppShell, ctx: &egui::Context, viewport_width: f32) {
                     commands: &mut commands,
                     route,
                     sub_view: shell.sub_view,
+                    recent_events,
+                    active_save_label,
                 };
                 dispatch(route, shell.sub_view, &mut shell.screen_states, ui, &mut screen_ctx);
             });

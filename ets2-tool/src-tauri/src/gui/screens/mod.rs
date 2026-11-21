@@ -183,6 +183,13 @@ pub struct ScreenCtx<'a> {
     /// Current sub-view, assigned by the shell every frame.
     /// Screens read it to follow deep links; they must never mutate it.
     pub sub_view: SubView,
+    /// Last five shell events (newest last), assigned by the shell every
+    /// frame. Screens read this live feed instead of opening a second
+    /// event subscription.
+    pub recent_events: &'a [(String, String)],
+    /// Label of the currently selected save (path or display name), empty
+    /// when no save is selected. Assigned by the shell every frame.
+    pub active_save_label: &'a str,
 }
 
 impl Route {
