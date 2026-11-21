@@ -583,6 +583,7 @@ fn execute(operation: Operation, state: &mut ScreenState, ctx: &mut ScreenCtx<'_
                     state.health_fix_candidate = None;
                     if result.applied {
                         info(ctx, message);
+                        ctx.commands.push(ShellCommand::RefreshSafety);
                     } else {
                         error(ctx, message);
                     }
@@ -673,6 +674,7 @@ fn execute(operation: Operation, state: &mut ScreenState, ctx: &mut ScreenCtx<'_
                     state.clone_error = None;
                     state.clone_validation = None;
                     info(ctx, message);
+                    ctx.commands.push(ShellCommand::RefreshSafety);
                     state.schedule(Operation::RefreshProfiles, "Refreshing profiles…");
                 }
                 Err(err) => {
@@ -736,6 +738,7 @@ fn execute(operation: Operation, state: &mut ScreenState, ctx: &mut ScreenCtx<'_
                     state.backup_error = None;
                     state.backup_preview = None;
                     info(ctx, message);
+                    ctx.commands.push(ShellCommand::RefreshSafety);
                     state.schedule(Operation::RefreshBackups, "Refreshing backups…");
                 }
                 Err(err) => {
@@ -763,6 +766,7 @@ fn execute(operation: Operation, state: &mut ScreenState, ctx: &mut ScreenCtx<'_
                     state.import_error = None;
                     state.import_preview = None;
                     info(ctx, message);
+                    ctx.commands.push(ShellCommand::RefreshSafety);
                     state.schedule(Operation::RefreshProfiles, "Refreshing profiles…");
                 }
                 Err(err) => {
@@ -1057,22 +1061,19 @@ fn render_copy_mods(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut Screen
                 .color(theme::MUTED),
         );
         if comp::button(ui, "Copy mod list to target").clicked() {
-            let source = path_for_label(state, &state.clone_source_label);
+            // The backend always copies from the active profile, so only the
+            // target selection can make this operation valid.
             let target = path_for_label(state, &state.target_profile_label);
-            match (source, target) {
-                (Some(_), Some(target)) => {
-                    state.confirm(
-                        "Copy mods",
-                        format!("Copy the active profile's mod list into the selected target profile ({target})? The target's current mod selection will be replaced."),
-                        Operation::ApplyCopyMods { target },
-                    );
-                }
-                _ => {
-                    let message = "Select a source and a target profile before copying mods."
-                        .to_string();
-                    state.copy_mods_error = Some(message.clone());
-                    validation(ctx, message);
-                }
+            if let Some(target) = target {
+                state.confirm(
+                    "Copy mods",
+                    format!("Copy the active profile's mod list into the selected target profile ({target})? The target's current mod selection will be replaced."),
+                    Operation::ApplyCopyMods { target },
+                );
+            } else {
+                let message = "Select a target profile before copying mods.".to_string();
+                state.copy_mods_error = Some(message.clone());
+                validation(ctx, message);
             }
         }
         if let Some(err) = &state.copy_mods_error {
@@ -1684,8 +1685,14 @@ fn render_confirm(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCt
         "Confirm",
         "Cancel",
     ) {
-        Some(true) => state.schedule(confirmation.action, "Applying confirmed action…"),
-        Some(false) => info(ctx, "Action cancelled.".to_string()),
+        Some(true) => {
+            state.confirm = None;
+            state.schedule(confirmation.action, "Applying confirmed action…");
+        }
+        Some(false) => {
+            state.confirm = None;
+            info(ctx, "Action cancelled.".to_string());
+        }
         None => {}
     }
 }
