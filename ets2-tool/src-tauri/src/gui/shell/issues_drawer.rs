@@ -17,6 +17,7 @@ const TABS: [IssuesTab; 4] = [
 pub fn render(shell: &mut AppShell, ctx: &egui::Context) {
     if shell.unsaved_prompt.is_none()
         && shell.confirm.is_none()
+        && !shell.screen_modal_open
         && ctx.input(|input| input.key_pressed(egui::Key::Escape))
     {
         shell.issues_open = false;

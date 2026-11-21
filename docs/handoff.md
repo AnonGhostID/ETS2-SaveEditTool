@@ -25,3 +25,15 @@ Delivered `gui/shell/` (AppShell plus context column, sector map, detail pane, S
 ## ProfileScreen — Phase 3 pilot (Profile / Safety)
 
 Delivered `ets2-tool/src-tauri/src/gui/screens/profile.rs` (~1776 lines) with the exact `#[derive(Default)] pub struct ScreenState` + `pub fn render(&mut egui::Ui, &mut ScreenState, &mut ScreenCtx<'_>)` contract. All four Safety tiles and their spec sub-views are present: Clone/Rename/CopyControls/CopyMods, Export/Import/Preview sharing, HealthScan/Report/Fix and BackupList/Preview/Confirm. Every wrapper in `gui/data/safety.rs` is called (validate, clone, rename, copy controls/mods, share context, pick export dir, export ZIP, pick archive, inspect, import, health scan/fix, backup list/preview/restore); profile list and staged state come from `data::context` / `data::session`. All destructive actions (clone, rename, copy controls, copy mods, import, health fix, backup restore) go through the shared `components::confirm_dialog`; restore additionally warns when `session::is_dirty`. Loading rows, empty states, inline validation, and `error_state` with Retry are rendered in every data view; every failure also pushes an error toast (mirrored into Issues by the shell) and validation pushes the `Validation: ` toast. No backend/component/shell/screen-contract files touched; no builds/tests run per assignment. Two shared-contract gaps logged in `docs/foundation-requests.md` (route visibility in `ScreenCtx`, focus trapping for screen-owned confirm dialogs). Parity rows appended. Gate: backend diff to be reported by the orchestrator; no backend paths edited.
+
+## FoundationFix — Phase 3 pilot follow-up (shared navigation + modal focus)
+
+Added `route: Route` and `sub_view: SubView` to `ScreenCtx` as shell-owned,
+read-only fields; `detail_pane::dispatch` now takes the shell's `SubView` and
+assigns both fields before all eight screen render calls. Added shell-side
+screen-modal focus trapping: visible `Order::Middle` layers other than the
+shell's own windows are treated as screen confirm dialogs, Tab/Shift+Tab are
+consumed and cycled over the two modal slots, and focus is restored on close.
+Documented both in `docs/components.md`; logged the two residual component-level
+items (explicit button ids/Escape opener support) in `docs/foundation-requests.md`.
+No builds/tests run per instruction. Gate: backend diff reported clean.

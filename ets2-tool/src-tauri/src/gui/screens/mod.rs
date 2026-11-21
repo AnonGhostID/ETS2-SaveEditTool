@@ -177,6 +177,12 @@ pub enum ShellCommand {
 pub struct ScreenCtx<'a> {
     pub data: &'a crate::gui::data::DataContext,
     pub commands: &'a mut Vec<ShellCommand>,
+    /// Current capability tile, assigned by the shell every frame.
+    /// Screens read it to follow deep links; they must never mutate it.
+    pub route: Route,
+    /// Current sub-view, assigned by the shell every frame.
+    /// Screens read it to follow deep links; they must never mutate it.
+    pub sub_view: SubView,
 }
 
 impl Route {

@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, RichText};
 
-use crate::gui::screens::{self, IssuesTab, Route, ScreenCtx, ScreenStates, ShellCommand};
+use crate::gui::screens::{self, IssuesTab, Route, ScreenCtx, ScreenStates, ShellCommand, SubView};
 use crate::gui::shell::AppShell;
 use crate::gui::theme;
 
@@ -48,8 +48,10 @@ pub fn render(shell: &mut AppShell, ctx: &egui::Context, viewport_width: f32) {
                 let mut screen_ctx = ScreenCtx {
                     data: &shell.data,
                     commands: &mut commands,
+                    route,
+                    sub_view: shell.sub_view,
                 };
-                dispatch(route, &mut shell.screen_states, ui, &mut screen_ctx);
+                dispatch(route, shell.sub_view, &mut shell.screen_states, ui, &mut screen_ctx);
             });
             shell.scroll_to_top = false;
 
@@ -75,10 +77,14 @@ pub fn render(shell: &mut AppShell, ctx: &egui::Context, viewport_width: f32) {
 
 fn dispatch(
     route: Route,
+    sub_view: SubView,
     states: &mut ScreenStates,
     ui: &mut egui::Ui,
     screen_ctx: &mut ScreenCtx<'_>,
 ) {
+    // The shell is the single authority for navigation state. Screens only read it.
+    screen_ctx.route = route;
+    screen_ctx.sub_view = sub_view;
     match route {
         Route::overview_dashboard
         | Route::overview_quick_actions

@@ -89,8 +89,16 @@ pub enum ShellCommand {
 pub struct ScreenCtx<'a> {
     pub data: &'a crate::gui::data::DataContext,
     pub commands: &'a mut Vec<ShellCommand>,
+    // Shell-owned, read-only for screens:
+    pub route: Route,
+    pub sub_view: SubView,
 }
-```
+
+`route` and `sub_view` are assigned by `gui/shell/detail_pane.rs::dispatch`
+every frame from `AppShell::route` / `AppShell::sub_view`. The shell is the
+single authority: screens may read them to follow Sector Map / Safety Spine
+deep links, but must never assign to them or push a `Navigate` command just
+to switch their own tab. `dispatch` covers all eight screen renderers.
 
 Every screen module exports exactly:
 
@@ -214,6 +222,17 @@ remain source-compatible for the old tab files until Phase 4 deletes them.
 Overlay buttons must be wrapped as
 `ui.push_id(components::modal_focus_id(index), |ui| components::button(ui, "…"))`
 so `AppShell::handle_tabs` can cycle focus and Escape can close/cancel.
+
+Screen-owned modals (e.g. `components::confirm_dialog` called from
+`gui/screens/profile.rs`) are detected by `AppShell::screen_modal_visible`:
+any visible `Order::Middle` egui layer other than the shell's own layers
+(`Unsaved changes`, `Confirm undo`, `Context`, and the toast Areas) is treated
+as a screen modal.
+While one is open, `AppShell::handle_tabs` consumes Tab/Shift+Tab and cycles
+the two modal focus slots (`modal_focus_id(0/1)`); on close it restores the
+focus captured when the modal appeared (spec §2.3). A screen that needs an
+explicit opener id should have the shared component register it — see the
+residual request in `docs/foundation-requests.md`.
 
 Loading/empty/error contract: every data view renders `loading_state` while
 loading, `empty_state` when the backend returns no rows, and `error_state`

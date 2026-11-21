@@ -41,6 +41,17 @@ pub enum ConfirmAction {
     UndoLast,
 }
 
+/// Layers the shell renders itself. Any other visible `Order::Middle` layer
+/// is a modal opened from a screen (currently `components::confirm_dialog`).
+/// The toast Areas share the Middle order but are not modal windows.
+fn is_shell_layer(id: Id) -> bool {
+    id == Id::new("Unsaved changes")
+        || id == Id::new("Confirm undo")
+        || id == Id::new("Context")
+        || id == Id::new("orbit_toast_stack")
+        || id == Id::new("toasts")
+}
+
 pub struct AppShell {
     pub app: AppHandle,
     pub data: DataContext,
@@ -97,6 +108,10 @@ pub struct AppShell {
     pub close_after_prompt: bool,
     pub focus_return: Option<Id>,
     pub focus_index: usize,
+    /// True while a screen-owned modal window (e.g. a confirm dialog) is visible.
+    pub screen_modal_open: bool,
+    /// Focus to hand back to the opener when that modal closes.
+    pub screen_modal_focus_return: Option<Id>,
 }
 
 impl AppShell {
@@ -150,6 +165,8 @@ impl AppShell {
             close_after_prompt: false,
             focus_return: None,
             focus_index: 0,
+            screen_modal_open: false,
+            screen_modal_focus_return: None,
         };
         shell.refresh_languages();
         shell.refresh_context();
@@ -491,13 +508,42 @@ impl AppShell {
         }
     }
 
+    /// Detect a screen-owned modal from egui's visible layers. Panels and
+    /// tooltips use other layer orders; shell windows are excluded by title.
+    fn screen_modal_visible(ctx: &egui::Context) -> bool {
+        ctx.memory(|memory| {
+            let visible = memory.areas().visible_layer_ids();
+            memory.layer_ids().any(|layer| {
+                layer.order == egui::Order::Middle
+                    && visible.contains(&layer)
+                    && !is_shell_layer(layer.id)
+            })
+        })
+    }
+
     fn handle_tabs(&mut self, ctx: &egui::Context) {
+        // Spec 2.3: a screen-owned modal traps Tab/Shift+Tab and gives focus
+        // back to the opener when it closes. Detection runs before screen
+        // rendering, so the layer set is the one produced by the last frame.
+        let screen_modal = Self::screen_modal_visible(ctx);
+        if screen_modal != self.screen_modal_open {
+            if screen_modal {
+                self.screen_modal_focus_return = ctx.memory(|memory| memory.focused());
+                self.focus_index = 0;
+            } else if let Some(id) = self.screen_modal_focus_return.take() {
+                ctx.memory_mut(|memory| memory.request_focus(id));
+            }
+            self.screen_modal_open = screen_modal;
+        }
+
         let count = if self.confirm.is_some() {
             2
         } else if self.unsaved_prompt.is_some() {
             3
         } else if self.issues_open {
             5
+        } else if screen_modal {
+            2
         } else {
             0
         };
