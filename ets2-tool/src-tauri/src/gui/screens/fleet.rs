@@ -1127,6 +1127,7 @@ fn apply_truck(state: &mut ScreenState, ctx: &mut ScreenCtx<'_>) {
                 ctx,
                 format!("Truck switched to {}.", result.active_truck_id),
             );
+            ctx.commands.push(ShellCommand::RefreshSafety);
             state.schedule(Operation::ReloadAll, "Refreshing vehicles after switch…");
         }
         Err(err) => fail(
@@ -1338,6 +1339,7 @@ fn apply_trailer(state: &mut ScreenState, ctx: &mut ScreenCtx<'_>) {
                 ctx,
                 format!("Trailer switched to {}.", result.active_trailer_id),
             );
+            ctx.commands.push(ShellCommand::RefreshSafety);
             state.schedule(Operation::ReloadAll, "Refreshing vehicles after switch…");
         }
         Err(err) => fail(
@@ -2610,8 +2612,14 @@ fn render_confirm(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCt
         "Confirm",
         "Cancel",
     ) {
-        Some(true) => state.schedule(confirmation.action, "Applying confirmed action…"),
-        Some(false) => info(ctx, "Action cancelled.".to_string()),
+        Some(true) => {
+            state.confirm.take();
+            state.schedule(confirmation.action, "Applying confirmed action…");
+        }
+        Some(false) => {
+            state.confirm.take();
+            info(ctx, "Action cancelled.".to_string());
+        }
         None => {}
     }
 }

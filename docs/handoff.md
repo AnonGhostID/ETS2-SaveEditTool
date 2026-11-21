@@ -184,3 +184,18 @@ Fixed four reported defects in the two owned screen files. `gui/screens/launcher
 ## FixGarages — static save-safety follow-up
 
 Fixed three defects in `ets2-tool/src-tauri/src/gui/screens/garages.rs`: (1) `render_confirm` (~1636-1644) now clears `state.confirm` in both `Some(true)` and `Some(false)` before scheduling or reporting cancellation, so the modal closes and Confirm is one-shot; (2) the four garage-detail save mutations (Buy garage, Upgrade, Assign driver + truck, Set as HQ; ~1119-1180) now use `state.ask_confirm` with the target label and expected save hash in each message instead of scheduling immediately; (3) `execute` (~710) pushes `ShellCommand::RefreshSafety` after every successful mutation so Safety Spine backup/staged/outcome gauges stay current. No backend or shared-component files touched; no builds/tests run per instruction. Gates: forbidden-import grep under `gui/screens/` empty; backend diff gate empty.
+
+## FixFleet — static save-safety follow-up (one-shot confirm, safety refresh)
+
+`gui/screens/fleet.rs`: (1) `render_confirm` (~2613) now clears `state.confirm`
+via `state.confirm.take()` in both `Some(true)` and `Some(false)` before
+scheduling the action or showing the cancel toast, so the modal closes, Confirm
+is one-shot, and `auto_load` is no longer blocked by `state.confirm.is_some()`;
+(2) `apply_truck` (~1130) and `apply_trailer` (~1342) now push
+`ShellCommand::RefreshSafety` on their successful (backup-creating) branches so
+the Safety Spine backup/staged gauges refresh immediately. The powertrain
+screen is read-only in this backend (catalog + preview only, no apply command),
+so the switch-apply operations are the powertrain-affecting backup operations
+covered here. No shared components, backend code, builds or tests touched.
+Gates: forbidden-import grep under `gui/screens/` empty; backend diff gate
+empty; `main.rs` untouched.
