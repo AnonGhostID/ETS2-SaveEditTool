@@ -100,6 +100,48 @@ Every row of `docs/ui-audit.md` must appear here and be ticked by the owning scr
 | Conflict Analyzer | Analysis loading/empty/error/validation + Retry | Blocking `block_on` + status toast | `loading_state` / `empty_state` / `error_state` with Retry / export validation + Issues | ✓ |
 | Library save-safety | Issues surface and backup/staged visibility | Status toast only | All four tiles: `Open Issues` command + Safety Spine (shell-owned), backup path shown after sandbox apply, staged warning in confirm | ✓ |
 
+## Operations sector (Phase 3 fan-out — `gui/screens/career.rs`)
+
+| Area | Feature | Old location | New location | Done |
+|---|---|---|---|---|
+| Live Telemetry | Four-tile sub-view dispatch | Career sub-tabs | Operations › Live Telemetry / Dispatcher / Logbook & Analytics / VTC & Account | ✓ |
+| Live Telemetry | C-065 career status | Career refresh + Live Telemetry | Operations › Live Telemetry › Live (bridge status card) | ✓ |
+| Live Telemetry | C-066 plugin status | Career refresh | Operations › Live Telemetry › Live (SDK plugin installed) | ✓ |
+| Live Telemetry | C-067 career overview (company, bank, reputation, fleet) | Live Telemetry | Operations › Live Telemetry › Live (Company economy & bank card) | ✓ |
+| Live Telemetry | Live telemetry sample with 500 ms repaint | Career tab repaint loop | Operations › Live Telemetry › Live (500 ms refresh + sample card) | ✓ |
+| Live Telemetry | Active trip summary | Live Telemetry overview | Operations › Live Telemetry › Live (active trip line) | ✓ |
+| Live Telemetry | C-081 ETS2 save snapshot refresh | Live Telemetry `Refresh Active Save Snapshot` | Operations › Live Telemetry › Save snapshot | ✓ |
+| Live Telemetry | Loading/empty/error/validation + Retry | Status toast only | `loading_state` / `empty_state` / `error_state` + Retry / inline validation + Issues | ✓ |
+| Dispatcher | C-068 dispatcher overview | Career refresh | Operations › Dispatcher › Generation (overview card) | ✓ |
+| Dispatcher | C-069 dispatcher generation status | Career refresh | Operations › Dispatcher › Generation (status card) | ✓ |
+| Dispatcher | C-079 generate standard market jobs | Dispatcher `Generate Market Jobs` | Operations › Dispatcher › Generation (Generate market jobs) | ✓ |
+| Dispatcher | C-080 generate save-synced universal jobs | Dispatcher `Generate Universal Jobs` | Operations › Dispatcher › Generation (force toggle + Generate universal jobs) | ✓ |
+| Dispatcher | C-082 cleanup expired jobs, confirmed | Dispatcher `Cleanup Expired Jobs` | Operations › Dispatcher › Generation (confirm dialog) | ✓ |
+| Dispatcher | C-070 market jobs table | Dispatcher `Available Market Jobs` | Operations › Dispatcher › Jobs (Market jobs) | ✓ |
+| Dispatcher | C-071 active jobs table | Dispatcher refresh | Operations › Dispatcher › Jobs (Active jobs) | ✓ |
+| Dispatcher | Job search and sort | Dispatcher search + sort headers | Operations › Dispatcher › Jobs (search, sort select, ascending toggle) | ✓ |
+| Dispatcher | C-083 accept dispatcher job | Job detail `Accept Job` | Operations › Dispatcher › Job detail (Accept job) | ✓ |
+| Dispatcher | C-085 cancel dispatcher job, confirmed | Job detail `Cancel Job` | Operations › Dispatcher › Job detail (confirm dialog) | ✓ |
+| Dispatcher | C-084 assign + prepare + write to quicksave, confirmed | Job detail `Write to Quicksave` | Operations › Dispatcher › Job detail (confirm dialog) | ✓ |
+| Dispatcher | C-091 staged-vs-written label and Save action | Job detail staging label | Operations › Dispatcher › Job detail (staged message + `Save staged edits` command) | ✓ |
+| Dispatcher | Job detail risk/bonus notes and last_error_message | Job detail card | Operations › Dispatcher › Job detail (risk, bonus and last error rows) | ✓ |
+| Dispatcher | Loading/empty/error/validation + Retry | Status toast / silent empty | `loading_state` / `empty_state` / `error_state` + Retry / selection validation + Issues | ✓ |
+| Logbook & Analytics | C-072 recorded trips table | Logbook `Recorded Trips` | Operations › Logbook & Analytics › Trips | ✓ |
+| Logbook & Analytics | C-073 job log table | Logbook refresh | Operations › Logbook & Analytics › Job log | ✓ |
+| Logbook & Analytics | C-074 job statistics | Logbook refresh | Operations › Logbook & Analytics › Stats | ✓ |
+| Logbook & Analytics | C-075 analytics summary | Analytics refresh | Operations › Logbook & Analytics › Analytics | ✓ |
+| Logbook & Analytics | C-086 profile job history scan | Analytics `Scan Profile Save Job History` | Operations › Logbook & Analytics › Analytics (Scan profile save job history) | ✓ |
+| Logbook & Analytics | C-087 analytics CSV export | Analytics `Export Analytics CSV` | Operations › Logbook & Analytics › Analytics (Export analytics CSV) | ✓ |
+| Logbook & Analytics | Loading/empty/error/validation + Retry | Status toast / silent empty | `loading_state` / `empty_state` / `error_state` + Retry / inline validation + Issues | ✓ |
+| VTC & Account | C-076 current user profile | VTC account card | Operations › VTC & Account › Sign in | ✓ |
+| VTC & Account | C-089 auth sign in with validation | VTC `Sign In` | Operations › VTC & Account › Sign in (required-field validation) | ✓ |
+| VTC & Account | C-088 auth sign out, confirmed | VTC `Sign Out` | Operations › VTC & Account › Sign in (confirm dialog) | ✓ |
+| VTC & Account | C-077 company overview | VTC company card | Operations › VTC & Account › Company | ✓ |
+| VTC & Account | C-078 company members | VTC member list | Operations › VTC & Account › Members | ✓ |
+| VTC & Account | C-090 create company with validation | VTC `Create VTC Company` | Operations › VTC & Account › Company (name/HQ validation) | ✓ |
+| VTC & Account | Loading/empty/error/validation + Retry | Status toast / silent empty | `loading_state` / `empty_state` / `error_state` + Retry / form validation + Issues | ✓ |
+| Operations save-safety | Backups/staged note, Issues drawer and Save staging status | Top-bar status only | Every Operations sub-view: staging note + `Open Issues` + Safety Spine Save | ✓ |
+
 ## Save Data sector (Phase 3 fan-out — `gui/screens/economy.rs`)
 
 | Area | Feature | Old location | New location | Done |
@@ -190,6 +232,7 @@ Every row of `docs/ui-audit.md` must appear here and be ticked by the owning scr
 | Overview states | Loading / empty / error + Retry for header, stats, setup, quick actions and activity | Status toasts | `loading_state` / `empty_state` / `error_state` with Retry + Issues opener on every data view | ✓ |
 
 ## Vehicles sector (Phase 3 fan-out — `gui/screens/fleet.rs`)
+## Operations sector — Garages & AI Drivers (Phase 3 fan-out — `gui/screens/garages.rs`)
 
 | Area | Feature | Old location | New location | Done |
 |---|---|---|---|---|
@@ -220,3 +263,77 @@ Every row of `docs/ui-audit.md` must appear here and be ticked by the owning scr
 | Fleet Inventory | C-022 all trailers with search and three sort keys | Vehicles Fleet Inventory trailers table | Vehicles › Fleet Inventory › Trailers | ✓ |
 | States | Loading / empty / error + Retry and inline validation for all six data views | Status toasts and silent empty panels | All Vehicles tiles (`loading_state`, `empty_state`, `error_state` with Retry, `validation_message` + `Validation:` toast) | ✓ |
 | Safety | Confirm dialog on every Apply, staged-edits warning, Issues opener, shell-owned Save/Backups/Spine | Top-bar status and per-screen buttons | All Vehicles tiles (shared confirm + `Open Issues` + Safety Spine staging note) | ✓ |
+| Garages | C-054 all garages, headquarters and parse diagnostics | Garages & Drivers list | Operations › Garages › List / Detail / Warnings | ✓ |
+| Garages | Search, Owned-only filter and five sort keys | Garages toolbar + sort headers | Operations › Garages › List / Detail (filter + sort controls) | ✓ |
+| Garages | C-057 purchase an unowned garage | Garage detail | Operations › Garages › Detail (Buy garage) | ✓ |
+| Garages | C-058 upgrade an owned garage | Garage detail | Operations › Garages › Detail (Upgrade) | ✓ |
+| Garages | C-059 random driver + truck resource assignment | Garage detail | Operations › Garages › Detail (Assign driver + truck) | ✓ |
+| Garages | C-060 set headquarters via garage update | Garage detail | Operations › Garages › Detail (Set as HQ) | ✓ |
+| Garages | C-061 sell a garage, confirmed | Garage confirm window | Operations › Garages › Detail → shared confirm dialog | ✓ |
+| Garages | C-062 sell empty garages, confirmed (strict sellable count, skipped names) | Garages bulk action | Operations › Garages › List → shared confirm dialog | ✓ |
+| Garages | C-063 buy all garages, confirmed | Garages bulk action | Operations › Garages › List → shared confirm dialog | ✓ |
+| AI Drivers | C-055 management list, available pool and truck list | Garage detail driver section | Operations › AI Drivers › Generate / Assign / Dismiss | ✓ |
+| AI Drivers | C-056 generate drivers (count 1–5, assign-trucks toggle) | Garage detail | Operations › AI Drivers › Generate | ✓ |
+| AI Drivers | Assign / reassign a specific driver's truck, and unassign | Backend command only; no old UI control | Operations › AI Drivers › Assign / reassign (`update_driver_truck`) | ✓ |
+| AI Drivers | Random truck reassignment at a driver's garage | Garage detail random resources | Operations › AI Drivers › Assign / reassign (Reassign random truck) | ✓ |
+| AI Drivers | C-064 dismiss one or many drivers, confirmed | Garage confirm window | Operations › AI Drivers › Generate / Dismiss → shared confirm dialog | ✓ |
+| Dialogs | U-038 destructive confirm for sell, sell-empty, buy-all and dismiss | Garage confirm window | Shared `confirm_dialog` with staged-edits warning | ✓ |
+| Load | U-043 explicit load via `BackgroundLoad` with repaint + Retry | Garages Load button | All Garages/AI Drivers sub-views (`loading_state`, `error_state` Retry) | ✓ |
+| States | Loading / empty / error + Retry and inline validation for every data view | Status toasts and silent empty panels | All Garage/Driver sub-views (`empty_state`, `validation_message`, Issues + toast) | ✓ |
+| Safety | Expected save hash on every mutation; staged count; Save/Backups owned by shell | Inline status + top bar | Detail Pane staged note + confirm warning + Issues opener; shell Safety Spine | ✓ |
+
+## Vehicles sector (Phase 3 fan-out — `gui/screens/fleet.rs`)
+
+| Area | Feature | Old location | New location | Done |
+|---|---|---|---|---|
+| Vehicle routes | Six-tile sub-view dispatch from shell route + sub-view | Vehicles sub-tabs | Vehicles › Player Truck / Player Trailer / Truck Switcher / Trailer Switcher / Powertrain Swapper / Fleet Inventory | ✓ |
+| Player Truck | C-021 player truck read | Vehicles Player Editor | Vehicles › Player Truck › Fields (one-time load + Retry) | ✓ |
+| Player Truck | C-035 repair truck, confirmed | Vehicles Player Editor `Repair Player Truck` | Vehicles › Player Truck › Fields (Repair truck → shared confirm) | ✓ |
+| Player Truck | C-036 refuel truck, confirmed | Vehicles Player Editor `Refuel Player Truck` | Vehicles › Player Truck › Fields (Refuel truck → shared confirm) | ✓ |
+| Player Truck | C-037 fuel slider 0..1, confirmed | Vehicles Player Editor fuel slider | Vehicles › Player Truck › Fuel & wear (slider + Apply fuel level) | ✓ |
+| Player Truck | C-038 wear slider 0..1 for engine/transmission/cabin/chassis/wheels, confirmed | Vehicles Player Editor wear buttons | Vehicles › Player Truck › Fuel & wear (component select + slider + Apply) | ✓ |
+| Player Truck | C-039 truck license plate with non-empty validation, confirmed | Vehicles Player Editor plate | Vehicles › Player Truck › Plate & odometer | ✓ |
+| Player Truck | C-040 odometer 0..=99,999,999, confirmed | Vehicles Player Editor odometer | Vehicles › Player Truck › Plate & odometer | ✓ |
+| Player Trailer | C-023 player trailer read | Vehicles Player Editor | Vehicles › Player Trailer › Fields (one-time load + Retry) | ✓ |
+| Player Trailer | C-041 repair trailer, confirmed | Vehicles Player Editor `Repair Player Trailer` | Vehicles › Player Trailer › Fields (Repair trailer → shared confirm) | ✓ |
+| Player Trailer | C-042 trailer plate with non-empty validation, confirmed | Vehicles Player Editor plate | Vehicles › Player Trailer › Fields (Apply plate) | ✓ |
+| Player Trailer | C-043 cargo mass 0..=200,000, confirmed | Vehicles Player Editor cargo mass | Vehicles › Player Trailer › Fields (Apply cargo mass) | ✓ |
+| Truck Switcher | C-044 initialize truck switch session | Vehicles Truck Switcher `Scan Owned Trucks` | Vehicles › Truck Switcher › Session (Scan owned trucks for switch) | ✓ |
+| Truck Switcher | C-045 list owned trucks for switch with search | Vehicles Truck Switcher table + search | Vehicles › Truck Switcher › List (search + selectable table) | ✓ |
+| Truck Switcher | C-046 preview warnings, mode, hash and can_apply | Vehicles Truck Switcher preview card | Vehicles › Truck Switcher › Preview (mode, details, warnings, expected hash, can_apply) | ✓ |
+| Truck Switcher | C-047 apply switch with persistent-backup toggle, confirmed | Vehicles Truck Switcher `Apply Active Truck Switch` | Vehicles › Truck Switcher › Apply (backup toggle + shared confirm + result) | ✓ |
+| Trailer Switcher | C-048 initialize trailer switch session | Vehicles Trailer Switcher `Scan Owned Trailers` | Vehicles › Trailer Switcher › Session (Scan owned trailers for switch) | ✓ |
+| Trailer Switcher | C-049 list owned trailers for switch with search | Vehicles Trailer Switcher table + search | Vehicles › Trailer Switcher › List (search + selectable table) | ✓ |
+| Trailer Switcher | C-050 preview warnings, hash and can_apply | Vehicles Trailer Switcher preview card | Vehicles › Trailer Switcher › Preview | ✓ |
+| Trailer Switcher | C-051 apply switch with persistent-backup toggle, confirmed | Vehicles Trailer Switcher `Apply Active Trailer Switch` | Vehicles › Trailer Switcher › Apply (backup toggle + shared confirm + result) | ✓ |
+| Switchers | Expected-hash comparison at preview and apply, stale-hash Reinitialize | Inline hash use | Vehicles › both Switchers › Preview (hash mismatch blocks apply + Reinitialize) | ✓ |
+| Powertrain | C-052 official powertrain catalog with ETS2/ATS selection | Vehicles Powertrain `Load Official Powertrain Catalog` | Vehicles › Powertrain Swapper › Catalog (auto-load + Retry + game select) | ✓ |
+| Powertrain | C-053 engine/transmission preview only (no apply command) | Vehicles Powertrain preview card | Vehicles › Powertrain Swapper › Preview (read-only preview, no Apply) | ✓ |
+| Fleet Inventory | C-020 all trucks with search and four sort keys | Vehicles Fleet Inventory trucks table | Vehicles › Fleet Inventory › Trucks | ✓ |
+| Fleet Inventory | C-022 all trailers with search and three sort keys | Vehicles Fleet Inventory trailers table | Vehicles › Fleet Inventory › Trailers | ✓ |
+| States | Loading / empty / error + Retry and inline validation for all six data views | Status toasts and silent empty panels | All Vehicles tiles (`loading_state`, `empty_state`, `error_state` with Retry, `validation_message` + `Validation:` toast) | ✓ |
+| Safety | Confirm dialog on every Apply, staged-edits warning, Issues opener, shell-owned Save/Backups/Spine | Top-bar status and per-screen buttons | All Vehicles tiles (shared confirm + `Open Issues` + Safety Spine staging note) | ✓ |
+
+## Shell / Context Column / Safety Spine (Phase 2 foundation)
+
+| Area | Feature | Old location | New location | Done |
+|---|---|---|---|---|
+| Language | C-001 available languages query | Shell new | Shell › Context Column › Language status | ✓ |
+| Language | C-002 current language query | Top bar LANG | Shell › Context Column › Language status | ✓ |
+| Save safety | C-003 Save staged edits (backup + write) | Top bar Save | Shell › Safety Spine › Save action | ✓ |
+| Context | C-004 set selected game | Top bar GAME combo | Shell › Context Column › Game selector | ✓ |
+| Save safety | C-005 discard pending changes | Unsaved prompt Discard | Shell › Unsaved prompt › Discard | ✓ |
+| Context | C-006 find ETS2 profiles | Shell refresh | Shell › Context Column › Profile selector | ✓ |
+| Context | C-007 read last profile | Shell refresh | Shell › Context Column › Profile selector | ✓ |
+| Context | C-008 save last profile | Shell select_profile | Shell › Context Column › Profile selector | ✓ |
+| Context | C-009 set active profile | Shell select_profile | Shell › Context Column › Profile selector | ✓ |
+| Context | C-010 find profile saves | Shell select_profile | Shell › Context Column › Save selector | ✓ |
+| Context | C-011 load profile | Shell select_save | Shell › Context Column › Save selector | ✓ |
+| Context | C-012 set current save | Shell select_save | Shell › Context Column › Save selector | ✓ |
+| Save safety | C-013 undo status | Shell reload | Shell › Safety Spine › Undo | ✓ |
+| Save data | C-014 read base config | Shell reload | Save Data › Custom Keys › Base config keys | ✓ |
+| Save data | C-015 read save config | Shell reload | Save Data › Custom Keys › Save config keys | ✓ |
+| Save data | C-016 read all save data | Shell reload | Shell › Context Column › context facts + startup refresh | ✓ |
+| Dashboard | C-018 quicksave game info | Shell reload | Overview › Dashboard › Header / context facts | ✓ |
+| Save safety | C-027 undo last save change | Top bar Undo | Shell › Safety Spine › Undo (shared confirm dialog) | ✓ |
+| Save safety | C-034 dirty state + dirty paths | Top bar dirty label | Shell › Safety Spine › Staged gauge + Save enablement | ✓ |
