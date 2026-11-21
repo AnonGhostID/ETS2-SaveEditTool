@@ -128,3 +128,26 @@ Every row of `docs/ui-audit.md` must appear here and be ticked by the owning scr
 | Project Coaches | C-096 formatted bus names in job rows | Coaches job/bus labels | Save Data › Project Coaches › Job history (`display_bus_name`) | ✓ |
 | Save Data states | Loading / empty / error + Retry / inline validation + Issues for every data view | Status toasts and silent empty panels | All four tiles (`loading_state`, `empty_state`, `error_state` with Retry, `validation_message` + `Validation:` toast) | ✓ |
 | Save Data safety | Staged-edit note, Save owned by Safety Spine, no local backup/flush logic | Top bar Save + inline status | All four Save Data tiles (staging note + Issues opener; shell owns Save/Backups/Undo) | ✓ |
+
+## Operations sector — Garages & AI Drivers (Phase 3 fan-out — `gui/screens/garages.rs`)
+
+| Area | Feature | Old location | New location | Done |
+|---|---|---|---|---|
+| Garages | C-054 all garages, headquarters and parse diagnostics | Garages & Drivers list | Operations › Garages › List / Detail / Warnings | ✓ |
+| Garages | Search, Owned-only filter and five sort keys | Garages toolbar + sort headers | Operations › Garages › List / Detail (filter + sort controls) | ✓ |
+| Garages | C-057 purchase an unowned garage | Garage detail | Operations › Garages › Detail (Buy garage) | ✓ |
+| Garages | C-058 upgrade an owned garage | Garage detail | Operations › Garages › Detail (Upgrade) | ✓ |
+| Garages | C-059 random driver + truck resource assignment | Garage detail | Operations › Garages › Detail (Assign driver + truck) | ✓ |
+| Garages | C-060 set headquarters via garage update | Garage detail | Operations › Garages › Detail (Set as HQ) | ✓ |
+| Garages | C-061 sell a garage, confirmed | Garage confirm window | Operations › Garages › Detail → shared confirm dialog | ✓ |
+| Garages | C-062 sell empty garages, confirmed (strict sellable count, skipped names) | Garages bulk action | Operations › Garages › List → shared confirm dialog | ✓ |
+| Garages | C-063 buy all garages, confirmed | Garages bulk action | Operations › Garages › List → shared confirm dialog | ✓ |
+| AI Drivers | C-055 management list, available pool and truck list | Garage detail driver section | Operations › AI Drivers › Generate / Assign / Dismiss | ✓ |
+| AI Drivers | C-056 generate drivers (count 1–5, assign-trucks toggle) | Garage detail | Operations › AI Drivers › Generate | ✓ |
+| AI Drivers | Assign / reassign a specific driver's truck, and unassign | Backend command only; no old UI control | Operations › AI Drivers › Assign / reassign (`update_driver_truck`) | ✓ |
+| AI Drivers | Random truck reassignment at a driver's garage | Garage detail random resources | Operations › AI Drivers › Assign / reassign (Reassign random truck) | ✓ |
+| AI Drivers | C-064 dismiss one or many drivers, confirmed | Garage confirm window | Operations › AI Drivers › Generate / Dismiss → shared confirm dialog | ✓ |
+| Dialogs | U-038 destructive confirm for sell, sell-empty, buy-all and dismiss | Garage confirm window | Shared `confirm_dialog` with staged-edits warning | ✓ |
+| Load | U-043 explicit load via `BackgroundLoad` with repaint + Retry | Garages Load button | All Garages/AI Drivers sub-views (`loading_state`, `error_state` Retry) | ✓ |
+| States | Loading / empty / error + Retry and inline validation for every data view | Status toasts and silent empty panels | All Garage/Driver sub-views (`empty_state`, `validation_message`, Issues + toast) | ✓ |
+| Safety | Expected save hash on every mutation; staged count; Save/Backups owned by shell | Inline status + top bar | Detail Pane staged note + confirm warning + Issues opener; shell Safety Spine | ✓ |
