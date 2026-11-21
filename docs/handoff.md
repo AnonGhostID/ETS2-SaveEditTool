@@ -41,3 +41,24 @@ No builds/tests run per instruction. Gate: backend diff reported clean.
 ## FoundationData — Phase 3 follow-up (garage data-layer gaps)
 
 Changed `gui/data/garages.rs` model import to `pub use` so Garages/AI Drivers screens can construct request/result types (including `GarageOwnership`, `GarageSize`, `AiDriverTruckAssignmentRequest`) via `crate::gui::data::garages::*` without importing `crate::features`. Added `update_driver_truck(&DataContext, AiDriverTruckAssignmentRequest) -> Result<AiDriverMutationResult, UiError>` delegating to `features::garages::commands::update_ai_driver_truck` with the six State args. No other file or backend path touched; no builds/tests run. Gate: backend diff empty.
+
+## CareerScreen — Phase 3 fan-out (Operations sector)
+
+Delivered `ets2-tool/src-tauri/src/gui/screens/career.rs` with the exact
+`#[derive(Default)] pub struct ScreenState` + `pub fn render(&mut egui::Ui,
+&mut ScreenState, &mut ScreenCtx<'_>)` contract. All four Operations routes and
+their spec sub-views are present: Live/Save snapshot; Jobs/Generation/Job
+detail; Trips/Job log/Stats/Analytics; Sign in/Company/Members. Every one of
+the 20 `gui/data/career.rs` and six `gui/data/vtc.rs` wrappers is called;
+staging state comes from `data::session::is_staging_enabled` and Save is a
+`ShellCommand::Save`. The 500 ms repaint, bridge/plugin status, live sample,
+snapshot refresh, market/active job search and sort, accept/cancel, confirmed
+write/cleanup, risk/bonus/last-error detail, staged-vs-written message, trips,
+job log, stats, analytics scan/export, auth sign in/out and VTC company
+creation are implemented. Every data view has loading, empty, error+retry and
+inline validation states; failures push an error toast and open the Issues
+drawer. Destructive actions (write, cancel, cleanup, sign out) use the shared
+confirm dialog. Only foundation primitives are used; no `crate::features`,
+`crate::commands` or `async_runtime` imports. Three data-layer requests were
+logged in `docs/foundation-requests.md`. No builds/tests run per instruction;
+gate: backend diff empty (verified by exact command in final report).

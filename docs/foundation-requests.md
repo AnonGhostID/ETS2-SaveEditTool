@@ -30,3 +30,24 @@ Screen agents append shared-component requests here. Only the foundation agent e
    should expose/announce the opener id (or `confirm_dialog` should return it)
    so restoration targets the exact opener rather than any previously focused
    widget.
+
+## CareerScreen (Phase 3 fan-out)
+
+1. **Typed `CreateCompanyInput` re-export from `gui/data/vtc.rs`.** The
+   `vtc::create_company` wrapper takes
+   `crate::features::vtc::models::CreateCompanyInput`, but screens may not
+   import `crate::features`. The career screen currently constructs the input
+   through `serde_json::from_value(json!({...}))`, which is type-inferred at
+   the wrapper call and works with the existing derive, but a
+   `pub use crate::features::vtc::models::CreateCompanyInput;` in the data
+   module (matching the garages fix) would let the screen build it directly.
+2. **Data wrapper for the selected game.** Company creation uses the active
+   game from `career::status().active_game` with an `"ets2"` fallback because
+   `gui/data/context.rs` has no wrapper for `AppProfileState::selected_game`.
+   Please add `context::selected_game(&DataContext) -> Result<String, UiError>`
+   so the form can match the Context Column selector exactly.
+3. **Data wrapper for the selected profile path.** Analytics history scanning
+   passes `None` to `career::scan_profile_job_history`, which the backend
+   resolves to the active profile; the old screen passed
+   `app.selected_profile_path`. A `context::selected_profile_path` wrapper
+   would allow exact parity without state access in the screen.
