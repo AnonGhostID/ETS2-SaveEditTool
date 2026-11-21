@@ -37,3 +37,7 @@ consumed and cycled over the two modal slots, and focus is restored on close.
 Documented both in `docs/components.md`; logged the two residual component-level
 items (explicit button ids/Escape opener support) in `docs/foundation-requests.md`.
 No builds/tests run per instruction. Gate: backend diff reported clean.
+
+## FoundationData — Phase 3 follow-up (garage data-layer gaps)
+
+Changed `gui/data/garages.rs` model import to `pub use` so Garages/AI Drivers screens can construct request/result types (including `GarageOwnership`, `GarageSize`, `AiDriverTruckAssignmentRequest`) via `crate::gui::data::garages::*` without importing `crate::features`. Added `update_driver_truck(&DataContext, AiDriverTruckAssignmentRequest) -> Result<AiDriverMutationResult, UiError>` delegating to `features::garages::commands::update_ai_driver_truck` with the six State args. No other file or backend path touched; no builds/tests run. Gate: backend diff empty.

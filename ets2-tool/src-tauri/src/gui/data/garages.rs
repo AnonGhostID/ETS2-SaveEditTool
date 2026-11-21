@@ -1,10 +1,15 @@
 //! Garage list/mutations and AI driver management (audit rows 54-64).
 
-use crate::features::garages::models::{
-    AiDriverGenerateRequest, AiDriverManagementResult, AiDriverMutationResult, AiDriverRemoveRequest,
-    GarageBuyAllRequest, GarageBuyAllResult, GarageListResult, GarageMutationRequest, GarageMutationResult,
-    GarageRelinquishEmptyRequest, GarageRelinquishEmptyResult, GarageResourceAssignmentRequest,
-    GarageUpdateRequest,
+/// Public model types for the Garages and AI Drivers screens. Re-exported so
+/// screens never import `crate::features` directly.
+pub use crate::features::garages::models::{
+    AiDriverGenerateRequest, AiDriverInfo, AiDriverManagementResult, AiDriverMutationOperation,
+    AiDriverMutationResult, AiDriverRemoveRequest, AiDriverSkills, AiDriverTruckAssignmentRequest,
+    AiDriverTruckInfo, GarageBulkOperation, GarageBuyAllRequest, GarageBuyAllResult,
+    GarageListResult, GarageMutationRequest, GarageMutationResult, GarageOperation,
+    GarageOwnership, GarageParseDiagnostics, GarageRelinquishEmptyRequest,
+    GarageRelinquishEmptyResult, GarageResourceAssignmentRequest, GarageSize, GarageSlotInfo,
+    GarageUpdateRequest, GarageInfo,
 };
 use crate::features::trailer_change::cache::TrailerChangeSessionCache;
 use crate::features::truck_change::cache::TruckChangeSessionCache;
@@ -163,6 +168,21 @@ pub fn remove_drivers(
     request: AiDriverRemoveRequest,
 ) -> Result<AiDriverMutationResult, UiError> {
     map_error(crate::features::garages::commands::remove_ai_drivers(
+        request,
+        ctx.app.state::<AppProfileState>(),
+        ctx.app.state::<ProfileCache>(),
+        ctx.app.state::<DecryptCache>(),
+        ctx.app.state::<TruckChangeSessionCache>(),
+        ctx.app.state::<TrailerChangeSessionCache>(),
+        ctx.app.state::<AppState>(),
+    ))
+}
+
+pub fn update_driver_truck(
+    ctx: &DataContext,
+    request: AiDriverTruckAssignmentRequest,
+) -> Result<AiDriverMutationResult, UiError> {
+    map_error(crate::features::garages::commands::update_ai_driver_truck(
         request,
         ctx.app.state::<AppProfileState>(),
         ctx.app.state::<ProfileCache>(),
