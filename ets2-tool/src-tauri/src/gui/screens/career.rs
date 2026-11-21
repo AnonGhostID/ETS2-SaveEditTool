@@ -800,7 +800,14 @@ fn execute(op: Operation, state: &mut ScreenState, ctx: &mut ScreenCtx<'_>) {
             }
         }
         Operation::ScanHistory => {
-            match crate::gui::data::career::scan_profile_job_history(ctx.data, None) {
+            let profile_path = match crate::gui::data::context::selected_profile_path(ctx.data) {
+                Ok(path) => Some(path),
+                Err(err) => {
+                    record_error(ctx, &mut state.scan_error, err);
+                    return;
+                }
+            };
+            match crate::gui::data::career::scan_profile_job_history(ctx.data, profile_path) {
                 Ok(result) => {
                     state.scan = Some(ScanView {
                         summary: format!(
@@ -864,40 +871,24 @@ fn execute(op: Operation, state: &mut ScreenState, ctx: &mut ScreenCtx<'_>) {
                     "en".to_string()
                 }
             };
-            let game = match crate::gui::data::career::status(ctx.data) {
-                Ok(status) => status.active_game.unwrap_or_else(|| "ets2".to_string()),
+            let game = match crate::gui::data::context::selected_game(ctx.data) {
+                Ok(game) => game,
                 Err(err) => {
-                    record_error(ctx, &mut state.status_error, err);
-                    "ets2".to_string()
-                }
-            };
-            // `CreateCompanyInput` is deserializable; constructing it through
-            // the typed `vtc::create_company` wrapper keeps the screen free
-            // of direct backend-type imports.
-            let input = serde_json::from_value(serde_json::json!({
-                "name": name,
-                "location": location,
-                "language": language,
-                "game": game,
-                "description": null,
-                "logoPath": null,
-                "headerPath": null,
-                "slogan": null,
-                "accentColor": null,
-                "publicVisibility": true
-            }));
-            let input = match input {
-                Ok(input) => input,
-                Err(err) => {
-                    record_error(
-                        ctx,
-                        &mut state.company_error,
-                        UiError {
-                            message: format!("Invalid company details: {err}"),
-                        },
-                    );
+                    record_error(ctx, &mut state.company_error, err);
                     return;
                 }
+            };
+            let input = crate::gui::data::vtc::CreateCompanyInput {
+                name,
+                location,
+                language,
+                game,
+                description: None,
+                logo_path: None,
+                header_path: None,
+                slogan: None,
+                accent_color: None,
+                public_visibility: Some(true),
             };
             match crate::gui::data::vtc::create_company(ctx.data, input) {
                 Ok(_) => {
