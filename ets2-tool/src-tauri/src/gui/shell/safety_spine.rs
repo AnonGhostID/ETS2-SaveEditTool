@@ -95,17 +95,12 @@ fn render_body(shell: &mut AppShell, ui: &mut egui::Ui, compact: bool) {
             .rounding(egui::Rounding::same(7.0))
             .min_size(egui::vec2(0.0, 28.0)),
     );
+    let undo_id = undo.id;
     if undo.on_hover_text(undo_tooltip).clicked() {
         shell.confirm = Some(ConfirmAction::UndoLast);
         shell.focus_index = 0;
-        shell.focus_return = Some(egui::Id::new("safety_undo_button"));
-
+        shell.focus_return = Some(undo_id);
     }
     ui.add_space(4.0);
-    ui.label(
-        RichText::new(&shell.last_save_outcome)
-            .size(9.0)
-
-            .wrap(),
-    );
+    ui.label(RichText::new(&shell.last_save_outcome).size(9.0));
 }

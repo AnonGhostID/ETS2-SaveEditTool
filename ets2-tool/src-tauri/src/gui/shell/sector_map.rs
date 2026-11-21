@@ -72,7 +72,8 @@ fn render_body(shell: &mut AppShell, ui: &mut Ui, compact: bool) {
 fn tile(ui: &mut Ui, label: &str, compact: bool) -> bool {
     let height = if compact { 34.0 } else { 66.0 };
     let response = ui.add(
-        egui::Button::new(RichText::new(label).size(11.5).wrap())
+        egui::Button::new(RichText::new(label).size(11.5))
+            .wrap_mode(egui::TextWrapMode::Wrap)
             .rounding(egui::Rounding::same(8.0))
             .min_size(egui::vec2(if compact { 186.0 } else { 104.0 }, height)),
     );

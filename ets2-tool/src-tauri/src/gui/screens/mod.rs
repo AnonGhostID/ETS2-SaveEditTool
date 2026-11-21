@@ -169,6 +169,7 @@ pub enum ShellCommand {
         is_error: bool,
     },
     Save,
+    RefreshSafety,
     RequestContextChange(ContextAction),
 }
 

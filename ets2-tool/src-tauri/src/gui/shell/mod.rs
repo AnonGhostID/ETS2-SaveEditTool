@@ -119,6 +119,8 @@ impl AppShell {
         theme::apply(&cc.egui_ctx);
         let event_rx = app.subscribe_events();
         let data = DataContext { app: app.clone() };
+        let selected_game =
+            crate::gui::data::context::selected_game(&data).unwrap_or_else(|_| "ets2".into());
         let mut shell = Self {
             app: app.clone(),
             data,
@@ -131,7 +133,7 @@ impl AppShell {
             scroll_to_top: false,
             sectors_overview: true,
 
-            selected_game: "ets2".to_string(),
+            selected_game,
             game_options: vec!["ets2".to_string(), "ats".to_string()],
             profiles: Vec::new(),
             selected_profile_path: None,
@@ -333,10 +335,6 @@ impl AppShell {
     /// Refresh the profile and save lists from the backend, preserving the
     /// current selections when they are still valid.
     pub fn refresh_context(&mut self) {
-        if let Err(err) = crate::gui::data::context::set_game(&self.data, self.selected_game.clone())
-        {
-            self.push_error(format!("Failed to set game: {}", err.message));
-        }
         let profiles = crate::gui::data::context::find_profiles(&self.data);
         self.profiles = profiles
             .into_iter()
@@ -441,13 +439,17 @@ impl AppShell {
     pub fn refresh_safety(&mut self) {
         self.dirty_paths = crate::gui::data::session::dirty_paths(&self.data).len();
         self.staging_enabled = crate::gui::data::session::is_staging_enabled(&self.data);
-        self.can_undo = !crate::gui::data::session::is_dirty(&self.data)
-            && crate::gui::data::context::undo_status(&self.data)
-                .map(|status| status.can_undo)
-                .unwrap_or(false);
-        self.undo_label = crate::gui::data::context::undo_status(&self.data)
-            .ok()
-            .and_then(|status| status.last_undo_label);
+        match crate::gui::data::context::undo_status(&self.data) {
+            Ok(status) => {
+                self.can_undo = !crate::gui::data::session::is_dirty(&self.data) && status.can_undo;
+                self.undo_label = status.last_undo_label;
+            }
+            Err(err) => {
+                self.can_undo = false;
+                self.undo_label = None;
+                self.push_error(format!("Undo status unavailable: {}", err.message));
+            }
+        }
         match crate::gui::data::safety::list_backups(&self.data) {
             Ok(backups) => {
                 self.backup_count = backups.len();
@@ -504,6 +506,7 @@ impl AppShell {
             ShellCommand::OpenIssues(tab) => self.open_issues(tab),
             ShellCommand::Toast { message, is_error } => self.push_toast(message, is_error),
             ShellCommand::Save => self.flush_pending_changes(),
+            ShellCommand::RefreshSafety => self.refresh_safety(),
             ShellCommand::RequestContextChange(action) => self.request_context_change(action),
         }
     }
@@ -582,6 +585,10 @@ impl eframe::App for AppShell {
         self.dirty_paths = crate::gui::data::session::dirty_paths(&self.data).len();
         self.handle_tabs(ctx);
 
+        if self.issues_open {
+            issues_drawer::render(self, ctx);
+        }
+
         let width = ctx.screen_rect().width();
         if width >= 1280.0 {
             context_column::render_expanded(self, ctx);
@@ -594,9 +601,6 @@ impl eframe::App for AppShell {
         }
         detail_pane::render(self, ctx, width);
 
-        if self.issues_open {
-            issues_drawer::render(self, ctx);
-        }
         overlays::render(self, ctx);
         components::toast_stack(ctx, &mut self.toasts);
 

@@ -104,7 +104,7 @@ pub fn render(shell: &mut AppShell, ctx: &egui::Context) {
                             );
                         } else {
                             for line in visible {
-                                ui.label(RichText::new(line).size(11.0).color(theme::TEXT).wrap());
+                                ui.label(RichText::new(line).size(11.0).color(theme::TEXT));
                             }
                         }
                         if ui.small_button("Refresh logs").clicked() {
@@ -131,7 +131,7 @@ pub fn render(shell: &mut AppShell, ctx: &egui::Context) {
                                 ui.label(
                                     RichText::new(event).size(10.5).strong().color(theme::ACCENT),
                                 );
-                                ui.label(RichText::new(payload).size(10.5).color(theme::MUTED).wrap());
+                                ui.label(RichText::new(payload).size(10.5).color(theme::MUTED));
                                 ui.add_space(4.0);
                             }
                         }
@@ -154,7 +154,7 @@ fn render_list(ui: &mut egui::Ui, items: &[String], empty_title: &str, empty_hin
         components::empty_state(ui, empty_title, empty_hint);
     } else {
         for item in items {
-            ui.label(RichText::new(item).size(11.0).color(theme::TEXT).wrap());
+            ui.label(RichText::new(item).size(11.0).color(theme::TEXT));
             ui.add_space(3.0);
         }
     }

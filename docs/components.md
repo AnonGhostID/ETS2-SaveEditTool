@@ -83,6 +83,7 @@ pub enum ShellCommand {
     OpenIssues(IssuesTab),
     Toast { message: String, is_error: bool },
     Save,
+    RefreshSafety,
     RequestContextChange(ContextAction),
 }
 
@@ -173,7 +174,10 @@ pending change; Cancel restores the prior selector value.
 Backups and Staged gauges, then resets screen-local caches.
 `refresh_safety()` re-reads `dirty_paths`, staging state, undo status and the
 backup list; failed backup listing keeps the last count and writes an Issues
-error.
+error. A failed undo-status read disables Undo and pushes an error toast that
+is mirrored into Issues. Screens refresh these gauges after screen-level
+backup operations by pushing `ShellCommand::RefreshSafety`, which the shell
+handles by calling `refresh_safety()`.
 
 ### 1.5 Regions
 
@@ -189,6 +193,9 @@ error.
 The Safety Spine is never scrolled out of view. Save is disabled at zero
 staged paths; Undo is disabled while staged or when the backend reports no
 undo. Undo is confirmed because it is a backup restore.
+
+The Issues drawer is rendered before the Detail Pane so its right `SidePanel`
+reserves width for the central panel in the same frame.
 
 ## 2. Primitives
 
