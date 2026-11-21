@@ -2,7 +2,7 @@
 
 
 ## Current phase
-Complete — awaiting user build/tests per docs/qa.md.
+Complete — cargo check/clippy/build pass; runtime QA per docs/qa.md remains with the user.
 
 ## Done
 - Created `ui-rebuild` branch from `main`
@@ -22,6 +22,7 @@ Complete — awaiting user build/tests per docs/qa.md.
 - Phase 5: docs/qa.md checklist (commands, copy-only fixture, flow walk, UI checks, parity); commit `711ac98`
 - Static review found 5 compile errors and 6 save-safety defects; all fixed and re-verified by focused re-review (no remaining findings in the reviewed set)
 - Backend gate empty at every phase; no backend requests logged
+- Compile verification at user request: 99 `cargo check` errors fixed in frontend code (commit `968b06c`); `cargo check`, `cargo clippy --all-targets` and `cargo build` all pass with 0 errors; backend gate still empty
 
 ## Blockers
 None.
