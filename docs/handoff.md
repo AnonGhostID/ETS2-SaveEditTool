@@ -172,3 +172,7 @@ Removed unsupported `RichText::wrap()` calls in `gui/shell/issues_drawer.rs` (us
 ## FixMods — RefreshSafety after sandbox apply
 
 `gui/screens/mods.rs:811` now pushes `ShellCommand::RefreshSafety` after a successful `apply_sandbox` (`apply_sandbox_to_active_profile`) result, so the Safety Spine backup/staged/outcome gauges refresh. Confirm-dialog handling unchanged; no other behavior touched. Forbidden-import grep under `gui/screens/` empty; backend gate empty. No builds/tests run.
+
+## FixCareer — static compile-defect fixes
+
+Fixed three reported defects in `gui/screens/career.rs`: (1) `CreateCompany` now assigns `current_language(ctx.data)` directly (it returns `String`, not `Result`) and the unreachable `Err` arm is gone; (2) `ScreenState` now declares `plugin_error: Option<String>` beside `status_error`, so the `refresh_live`/telemetry uses at lines ~368, ~370 and ~1095 compile and the derived `Default` still covers it; (3) audited every confirm-dialog handler — there is exactly one (`render_confirm`), and it already uses `state.confirm.take()` with restoration in the unanswered branch, so no change was needed. No shared components or backend code touched. No builds/tests run per instruction. Gate: forbidden-import grep under `gui/screens/` empty; backend diff gate empty.

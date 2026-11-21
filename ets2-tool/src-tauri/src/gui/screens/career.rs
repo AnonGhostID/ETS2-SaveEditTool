@@ -210,6 +210,7 @@ pub struct ScreenState {
 
     status: Option<StatusView>,
     status_error: Option<String>,
+    plugin_error: Option<String>,
     overview: Option<OverviewView>,
     overview_error: Option<String>,
     snapshot: Option<String>,
@@ -864,13 +865,7 @@ fn execute(op: Operation, state: &mut ScreenState, ctx: &mut ScreenCtx<'_>) {
             }
         }
         Operation::CreateCompany { name, location } => {
-            let language = match crate::gui::data::context::current_language(ctx.data) {
-                Ok(language) => language,
-                Err(err) => {
-                    record_error(ctx, &mut state.company_error, err);
-                    "en".to_string()
-                }
-            };
+            let language = crate::gui::data::context::current_language(ctx.data);
             let game = match crate::gui::data::context::selected_game(ctx.data) {
                 Ok(game) => game,
                 Err(err) => {
