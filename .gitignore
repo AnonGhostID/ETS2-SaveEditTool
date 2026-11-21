@@ -21,3 +21,4 @@ node_modules/
 # absent). Applies to both the repo data dir and the crate data dir.
 ets2-tool/data/app.sqlite*
 ets2-tool/src-tauri/data/app.sqlite*
+ets2-tool.exe
