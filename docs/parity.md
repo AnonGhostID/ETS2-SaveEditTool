@@ -99,3 +99,32 @@ Every row of `docs/ui-audit.md` must appear here and be ticked by the owning scr
 | Conflict Analyzer | C-118 export conflict report | Mods Analyzer `Export Diagnostic Report` | Library › Conflict Analyzer (Export Diagnostic Report, requires completed report) | ✓ |
 | Conflict Analyzer | Analysis loading/empty/error/validation + Retry | Blocking `block_on` + status toast | `loading_state` / `empty_state` / `error_state` with Retry / export validation + Issues | ✓ |
 | Library save-safety | Issues surface and backup/staged visibility | Status toast only | All four tiles: `Open Issues` command + Safety Spine (shell-owned), backup path shown after sandbox apply, staged warning in confirm | ✓ |
+
+## Save Data sector (Phase 3 fan-out — `gui/screens/economy.rs`)
+
+| Area | Feature | Old location | New location | Done |
+|---|---|---|---|---|
+| Economy & Experience | C-136 edit player money + quick amount buttons | Save Editor › Economy | Save Data › Economy & Experience › Fields (Apply Money, +100k/+1M/Set 10M/Set 100M) | ✓ |
+| Economy & Experience | C-137 edit truck XP from the true game.sii value | Save Editor › Economy | Save Data › Economy & Experience › Fields (Apply XP, truck XP from `try_read_truck_xp`) | ✓ |
+| Economy & Experience | C-138 edit target level | Save Editor › Economy | Save Data › Economy & Experience › Fields (Apply Level) | ✓ |
+| Economy & Experience | C-148 level preview with progress and capped next level | Save Editor › level card | Save Data › Economy & Experience › Level preview | ✓ |
+| Economy & Experience | C-140 six skill sliders with ADR 0–63 / others 0–6 | Save Editor › Skills | Save Data › Economy & Experience › Skills (six sliders + Apply) | ✓ |
+| Economy & Experience | Max All Skills (six staged writes), confirmed | Save Editor › Skills `Max All Skills` | Save Data › Economy & Experience › Skills (shared confirm dialog) | ✓ |
+| Economy & Experience | C-139 custom reset values (money plus last-edited XP/level) | Save Editor › Economy batch | Save Data › Economy & Experience › Custom reset (and Fields batch button) | ✓ |
+| Config Values | C-141 traffic density | Save Editor › Config | Save Data › Config Values (slider + Apply, 0–10) | ✓ |
+| Config Values | C-142 developer mode | Save Editor › Config | Save Data › Config Values (toggle) | ✓ |
+| Config Values | C-143 developer console | Save Editor › Config | Save Data › Config Values (toggle) | ✓ |
+| Config Values | C-145 max convoy size | Save Editor › Config | Save Data › Config Values (slider + Apply, 1–128) | ✓ |
+| Config Values | C-144 double trailer parking | Save Editor › Config | Save Data › Config Values (toggle from profile config) | ✓ |
+| Custom Keys | C-146 base `config.cfg` custom key/value rows | Save Editor › Advanced custom keys | Save Data › Custom Keys › Base config keys (key/value table + Set) | ✓ |
+| Custom Keys | C-147 save/profile `config.cfg` custom key/value rows | Save Editor › Advanced custom keys | Save Data › Custom Keys › Save config keys (key/value table + Set) | ✓ |
+| Custom Keys | Non-empty key + duplicate-key warning and overwrite confirm | Save Editor inline status | Save Data › Custom Keys (inline validation + Issues + shared confirm) | ✓ |
+| Refresh | C-135 / U-048 Refresh Save Data | Save Editor `Refresh Save Data` | Toolbar on all four Save Data tiles (re-reads save, skills, config and coaches snapshot) | ✓ |
+| Project Coaches | C-092 snapshot read + explicit reload | Coaches `Load Coaches Data` | Save Data › Project Coaches (automatic load + Reload + Refresh Save Data) | ✓ |
+| Project Coaches | C-093 / C-097 bus XP edit and derived bus level, hash-checked with confirm on ambiguous snapshots | Coaches career card | Save Data › Project Coaches › Overview (Bus XP + Set bus XP = truck XP) | ✓ |
+| Project Coaches | Bus statistics table (distance, jobs, passengers, play time) | Coaches `BUS STATISTICS` grid | Save Data › Project Coaches › Statistics | ✓ |
+| Project Coaches | C-094 job history with formatted bus and stop names | Coaches `JOB HISTORY` grid | Save Data › Project Coaches › Job history | ✓ |
+| Project Coaches | C-095 / U-037 discovered stops with search and All/Discovered/Undiscovered filter | Coaches `BUS STOPS` search + segmented tabs | Save Data › Project Coaches › Bus stops | ✓ |
+| Project Coaches | C-096 formatted bus names in job rows | Coaches job/bus labels | Save Data › Project Coaches › Job history (`display_bus_name`) | ✓ |
+| Save Data states | Loading / empty / error + Retry / inline validation + Issues for every data view | Status toasts and silent empty panels | All four tiles (`loading_state`, `empty_state`, `error_state` with Retry, `validation_message` + `Validation:` toast) | ✓ |
+| Save Data safety | Staged-edit note, Save owned by Safety Spine, no local backup/flush logic | Top bar Save + inline status | All four Save Data tiles (staging note + Issues opener; shell owns Save/Backups/Undo) | ✓ |
