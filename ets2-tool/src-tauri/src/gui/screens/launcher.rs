@@ -686,19 +686,20 @@ fn refresh_header(state: &mut ScreenState, ctx: &mut ScreenCtx<'_>) {
 }
 
 fn refresh_facts(state: &mut ScreenState, ctx: &mut ScreenCtx<'_>) {
-    let Some(profile_path) = match active_profile_path(ctx) {
-        Ok(path) => path,
+    let profile_path = match active_profile_path(ctx) {
+        Ok(Some(path)) => path,
+        Ok(None) => {
+            state.facts = None;
+            state.facts_error = None;
+            state.facts_tried = true;
+            return;
+        }
         Err(message) => {
             state.facts_error = Some(message.clone());
             error(ctx, message);
             state.facts_tried = true;
             return;
         }
-    } else {
-        state.facts = None;
-        state.facts_error = None;
-        state.facts_tried = true;
-        return;
     };
 
     let mut failures: Vec<String> = Vec::new();
@@ -975,8 +976,14 @@ fn render_confirm(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCt
         "Confirm",
         "Cancel",
     ) {
-        Some(true) => state.schedule(confirmation.action, "Applying confirmed action…"),
-        Some(false) => info(ctx, "Action cancelled.".to_string()),
+        Some(true) => {
+            state.confirm = None;
+            state.schedule(confirmation.action, "Applying confirmed action…");
+        }
+        Some(false) => {
+            state.confirm = None;
+            info(ctx, "Action cancelled.".to_string());
+        }
         None => {}
     }
 }

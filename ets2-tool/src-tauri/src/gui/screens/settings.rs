@@ -741,6 +741,21 @@ fn render_about(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx<
 // ----------------------------------------------------------- operation runner
 
 fn execute(operation: Operation, state: &mut ScreenState, ctx: &mut ScreenCtx<'_>) {
+    // A location change reloads the whole context. Make the shell's unsaved
+    // guard run before any backend write so staged edits cannot be lost.
+    if matches!(
+        operation,
+        Operation::ChoosePath | Operation::ResetPath | Operation::ApplyMode { .. }
+    ) && crate::gui::data::session::is_dirty(ctx.data)
+    {
+        error(
+            ctx,
+            "Save or discard staged edits before changing the ETS2 data location.".to_string(),
+        );
+        ctx.commands
+            .push(ShellCommand::RequestContextChange(ContextAction::Reload));
+        return;
+    }
     match operation {
         Operation::RefreshAll => {
             refresh_paths(state, ctx);
@@ -871,6 +886,7 @@ fn execute(operation: Operation, state: &mut ScreenState, ctx: &mut ScreenCtx<'_
                     let message = format!("Cleared user logs (backup: {backup}).");
                     state.export_message = Some(message.clone());
                     info(ctx, message);
+                    ctx.commands.push(ShellCommand::RefreshSafety);
                     refresh_logs(state, ctx);
                     refresh_preview(state, ctx);
                 }
@@ -879,6 +895,7 @@ fn execute(operation: Operation, state: &mut ScreenState, ctx: &mut ScreenCtx<'_
                     let message = "User logs were already empty.".to_string();
                     state.export_message = Some(message.clone());
                     info(ctx, message);
+                    ctx.commands.push(ShellCommand::RefreshSafety);
                     refresh_logs(state, ctx);
                 }
                 Err(err) => {
@@ -904,6 +921,7 @@ fn apply_location_result(
     // Context reload goes through the shell's unsaved-changes guard.
     ctx.commands
         .push(ShellCommand::RequestContextChange(ContextAction::Reload));
+    ctx.commands.push(ShellCommand::RefreshSafety);
     let _ = (mode, custom_homedir);
 }
 
@@ -1117,8 +1135,14 @@ fn render_confirm(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCt
         "Confirm",
         "Cancel",
     ) {
-        Some(true) => state.schedule(confirmation.action, "Applying confirmed action…"),
-        Some(false) => info(ctx, "Action cancelled.".to_string()),
+        Some(true) => {
+            state.confirm = None;
+            state.schedule(confirmation.action, "Applying confirmed action…");
+        }
+        Some(false) => {
+            state.confirm = None;
+            info(ctx, "Action cancelled.".to_string());
+        }
         None => {}
     }
 }
