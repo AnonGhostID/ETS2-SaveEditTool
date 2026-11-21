@@ -11,89 +11,52 @@ use crate::gui::components as comp;
 use crate::gui::screens::{IssuesTab, Route, ScreenCtx, ShellCommand, SubView};
 use crate::gui::theme;
 
-// ---------------------------------------------------------------- view enums
+// ------------------------------------------------- shell-owned view helpers
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum Tile {
-    #[default]
-    Clone,
-    Sharing,
-    Health,
-    Backups,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum CloneView {
-    #[default]
-    CloneForm,
-    RenameForm,
-    CopyControls,
-    CopyMods,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum ShareView {
-    #[default]
-    ShareExport,
-    ShareImport,
-    SharePreview,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum HealthView {
-    #[default]
-    HealthScan,
-    HealthReport,
-    HealthFix,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum BackupView {
-    #[default]
-    BackupList,
-    BackupPreview,
-    BackupConfirm,
-}
-
-impl CloneView {
-    fn sub_view(self) -> SubView {
-        match self {
-            CloneView::CloneForm => SubView::CloneForm,
-            CloneView::RenameForm => SubView::RenameForm,
-            CloneView::CopyControls => SubView::CopyControls,
-            CloneView::CopyMods => SubView::CopyMods,
-        }
+/// Validate the sub-view supplied by the shell; never keep a second,
+/// local navigation state. An invalid or unrelated view falls back to the
+/// tile's default sub-view (docs/ui-spec.md §1.3 rule 3).
+fn normalized_sub_view(route: Route, view: SubView) -> SubView {
+    match route {
+        Route::safety_profile_clone_rename => match view {
+            SubView::RenameForm | SubView::CopyControls | SubView::CopyMods => view,
+            _ => SubView::CloneForm,
+        },
+        Route::safety_profile_sharing => match view {
+            SubView::ShareImport | SubView::SharePreview => view,
+            _ => SubView::ShareExport,
+        },
+        Route::safety_save_health => match view {
+            SubView::HealthReport | SubView::HealthFix => view,
+            _ => SubView::HealthScan,
+        },
+        Route::safety_backups_restore => match view {
+            SubView::BackupPreview | SubView::BackupConfirm => view,
+            _ => SubView::BackupList,
+        },
+        _ => SubView::None,
     }
 }
 
-impl ShareView {
-    fn sub_view(self) -> SubView {
-        match self {
-            ShareView::ShareExport => SubView::ShareExport,
-            ShareView::ShareImport => SubView::ShareImport,
-            ShareView::SharePreview => SubView::SharePreview,
+/// Sub-view buttons are only navigation *requests*: the shell owns
+/// `ctx.route` / `ctx.sub_view` and decides what renders next frame.
+fn sub_view_nav(
+    ui: &mut egui::Ui,
+    ctx: &mut ScreenCtx<'_>,
+    route: Route,
+    current: SubView,
+    items: &[(SubView, &str)],
+) {
+    ui.horizontal(|ui| {
+        for (view, label) in items {
+            if *view == current {
+                ui.label(egui::RichText::new(*label).strong().color(theme::ACCENT));
+            } else if comp::button(ui, label).clicked() {
+                navigate(route, *view, ctx);
+            }
         }
-    }
-}
-
-impl HealthView {
-    fn sub_view(self) -> SubView {
-        match self {
-            HealthView::HealthScan => SubView::HealthScan,
-            HealthView::HealthReport => SubView::HealthReport,
-            HealthView::HealthFix => SubView::HealthFix,
-        }
-    }
-}
-
-impl BackupView {
-    fn sub_view(self) -> SubView {
-        match self {
-            BackupView::BackupList => SubView::BackupList,
-            BackupView::BackupPreview => SubView::BackupPreview,
-            BackupView::BackupConfirm => SubView::BackupConfirm,
-        }
-    }
+    });
+    ui.add_space(6.0);
 }
 
 // ------------------------------------------------------------ local DTO views
@@ -219,11 +182,7 @@ struct Confirm {
 /// clears it (docs/ui-spec.md §1.3 rule 5).
 #[derive(Default)]
 pub struct ScreenState {
-    tile: Tile,
-    clone_view: CloneView,
-    share_view: ShareView,
-    health_view: HealthView,
-    backup_view: BackupView,
+    // Route and sub-view are owned by the shell via `ScreenCtx`.
 
     // Shared profile list used by clone and by both copy actions.
     profiles: Vec<ProfileChoice>,
@@ -348,23 +307,7 @@ fn optional_override(value: &str) -> Option<String> {
 
 // ------------------------------------------------------------------ rendering
 
-fn route_for_tile(tile: Tile) -> Route {
-    match tile {
-        Tile::Clone => Route::safety_profile_clone_rename,
-        Tile::Sharing => Route::safety_profile_sharing,
-        Tile::Health => Route::safety_save_health,
-        Tile::Backups => Route::safety_backups_restore,
-    }
-}
-
-fn default_view(tile: Tile) -> SubView {
-    match tile {
-        Tile::Clone => SubView::CloneForm,
-        Tile::Sharing => SubView::ShareExport,
-        Tile::Health => SubView::HealthScan,
-        Tile::Backups => SubView::BackupList,
-    }
-}
+// Routing is shell-owned; `normalized_sub_view` validates `ctx.sub_view`.
 
 fn navigate(route: Route, sub_view: SubView, ctx: &mut ScreenCtx<'_>) {
     ctx.commands.push(ShellCommand::Navigate {
@@ -384,21 +327,7 @@ pub fn render(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx<'_
         execute(operation, state, ctx);
     }
 
-    if let Some(tile) = comp::tabs(
-        ui,
-        state.tile,
-        &[
-            (Tile::Clone, "Clone & Rename"),
-            (Tile::Sharing, "Profile Sharing"),
-            (Tile::Health, "Save Health"),
-            (Tile::Backups, "Backups & Restore"),
-        ],
-    ) {
-        if tile != state.tile {
-            state.tile = tile;
-            navigate(route_for_tile(tile), default_view(tile), ctx);
-        }
-    }
+    // Navigation is supplied by the shell every frame; no local selector.
 
     ui.add_space(4.0);
     ui.horizontal(|ui| {
@@ -416,11 +345,13 @@ pub fn render(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx<'_
         comp::loading_state(ui, message);
     }
 
-    match state.tile {
-        Tile::Clone => render_clone(ui, state, ctx),
-        Tile::Sharing => render_sharing(ui, state, ctx),
-        Tile::Health => render_health(ui, state, ctx),
-        Tile::Backups => render_backups(ui, state, ctx),
+    let view = normalized_sub_view(ctx.route, ctx.sub_view);
+    match ctx.route {
+        Route::safety_profile_clone_rename => render_clone(ui, state, ctx, view),
+        Route::safety_profile_sharing => render_sharing(ui, state, ctx, view),
+        Route::safety_save_health => render_health(ui, state, ctx, view),
+        Route::safety_backups_restore => render_backups(ui, state, ctx, view),
+        _ => render_clone(ui, state, ctx, SubView::CloneForm),
     }
 
     render_confirm(ui, state, ctx);
@@ -597,7 +528,7 @@ fn execute(operation: Operation, state: &mut ScreenState, ctx: &mut ScreenCtx<'_
                         has_manifest: preview.has_manifest,
                     });
                     state.import_error = None;
-                    state.share_view = ShareView::SharePreview;
+
                     navigate(
                         Route::safety_profile_sharing,
                         SubView::SharePreview,
@@ -712,7 +643,7 @@ fn execute(operation: Operation, state: &mut ScreenState, ctx: &mut ScreenCtx<'_
                     });
                     state.backup_preview_tried = true;
                     state.backup_error = None;
-                    state.backup_view = BackupView::BackupPreview;
+
                     navigate(Route::safety_backups_restore, SubView::BackupPreview, ctx);
                 }
                 Err(err) => {
@@ -845,27 +776,19 @@ fn execute(operation: Operation, state: &mut ScreenState, ctx: &mut ScreenCtx<'_
 
 // --------------------------------------------------------------- clone tile
 
-fn render_clone(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx<'_>) {
-    if let Some(view) = comp::tabs(
+fn render_clone(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx<'_>, view: SubView) {
+    sub_view_nav(
         ui,
-        state.clone_view,
+        ctx,
+        Route::safety_profile_clone_rename,
+        view,
         &[
-            (CloneView::CloneForm, "Clone"),
-            (CloneView::RenameForm, "Rename"),
-            (CloneView::CopyControls, "Copy controls"),
-            (CloneView::CopyMods, "Copy mods"),
+            (SubView::CloneForm, "Clone"),
+            (SubView::RenameForm, "Rename"),
+            (SubView::CopyControls, "Copy controls"),
+            (SubView::CopyMods, "Copy mods"),
         ],
-    ) {
-        if view != state.clone_view {
-            state.clone_view = view;
-            navigate(
-                Route::safety_profile_clone_rename,
-                view.sub_view(),
-                ctx,
-            );
-        }
-    }
-    ui.add_space(6.0);
+    );
 
     if !state.profiles_loaded && state.profiles_error.is_none() && state.loading.is_none() {
         state.schedule(Operation::RefreshProfiles, "Loading profiles…");
@@ -906,11 +829,11 @@ fn render_clone(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx<
         }
     });
 
-    match state.clone_view {
-        CloneView::CloneForm => render_clone_form(ui, state, ctx),
-        CloneView::RenameForm => render_rename_form(ui, state, ctx),
-        CloneView::CopyControls => render_copy_controls(ui, state, ctx),
-        CloneView::CopyMods => render_copy_mods(ui, state, ctx),
+    match view {
+        SubView::RenameForm => render_rename_form(ui, state, ctx),
+        SubView::CopyControls => render_copy_controls(ui, state, ctx),
+        SubView::CopyMods => render_copy_mods(ui, state, ctx),
+        _ => render_clone_form(ui, state, ctx),
     }
 }
 
@@ -1164,22 +1087,18 @@ fn render_copy_mods(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut Screen
     });
 }
 
-fn render_sharing(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx<'_>) {
-    if let Some(view) = comp::tabs(
+fn render_sharing(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx<'_>, view: SubView) {
+    sub_view_nav(
         ui,
-        state.share_view,
+        ctx,
+        Route::safety_profile_sharing,
+        view,
         &[
-            (ShareView::ShareExport, "Export ZIP"),
-            (ShareView::ShareImport, "Import ZIP"),
-            (ShareView::SharePreview, "Archive preview"),
+            (SubView::ShareExport, "Export ZIP"),
+            (SubView::ShareImport, "Import ZIP"),
+            (SubView::SharePreview, "Archive preview"),
         ],
-    ) {
-        if view != state.share_view {
-            state.share_view = view;
-            navigate(Route::safety_profile_sharing, view.sub_view(), ctx);
-        }
-    }
-    ui.add_space(6.0);
+    );
 
     if !state.share_context_loaded && state.share_context_error.is_none() && state.loading.is_none()
     {
@@ -1218,10 +1137,10 @@ fn render_sharing(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCt
         }
     });
 
-    match state.share_view {
-        ShareView::ShareExport => render_share_export(ui, state, ctx),
-        ShareView::ShareImport => render_share_import(ui, state, ctx),
-        ShareView::SharePreview => render_share_preview(ui, state),
+    match view {
+        SubView::ShareImport => render_share_import(ui, state, ctx),
+        SubView::SharePreview => render_share_preview(ui, state),
+        _ => render_share_export(ui, state, ctx),
     }
 }
 
@@ -1419,29 +1338,25 @@ fn render_share_preview(ui: &mut egui::Ui, state: &mut ScreenState) {
 
 // ------------------------------------------------------------- health tile
 
-fn render_health(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx<'_>) {
-    if let Some(view) = comp::tabs(
+fn render_health(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx<'_>, view: SubView) {
+    sub_view_nav(
         ui,
-        state.health_view,
+        ctx,
+        Route::safety_save_health,
+        view,
         &[
-            (HealthView::HealthScan, "Scan"),
-            (HealthView::HealthReport, "Report"),
-            (HealthView::HealthFix, "Fix"),
+            (SubView::HealthScan, "Scan"),
+            (SubView::HealthReport, "Report"),
+            (SubView::HealthFix, "Fix"),
         ],
-    ) {
-        if view != state.health_view {
-            state.health_view = view;
-            navigate(Route::safety_save_health, view.sub_view(), ctx);
-        }
-    }
-    ui.add_space(6.0);
+    );
 
     if state.health_report.is_none() && state.health_error.is_none() && state.loading.is_none() {
         state.schedule(Operation::RefreshHealth, "Scanning active save health…");
     }
 
-    match state.health_view {
-        HealthView::HealthScan => {
+    match view {
+        SubView::HealthScan => {
             comp::section_card(ui, "Active save health scan", |ui| {
                 ui.label(
                     "Checks the currently loaded save for repairable problems. This is read-only until a fix is confirmed.",
@@ -1460,7 +1375,7 @@ fn render_health(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx
             });
         }
 
-        HealthView::HealthReport => {
+        SubView::HealthReport => {
             comp::section_card(ui, "Health report", |ui| {
                 if let Some(report) = &state.health_report {
                     ui.label(
@@ -1500,7 +1415,7 @@ fn render_health(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx
                             if comp::button(ui, "Apply auto-fix").clicked() {
                                 state.health_fix_candidate =
                                     Some((fix_id, problem.title.clone()));
-                                state.health_view = HealthView::HealthFix;
+
                                 navigate(Route::safety_save_health, SubView::HealthFix, ctx);
                                 state.confirm(
                                     "Apply save health fix",
@@ -1516,7 +1431,7 @@ fn render_health(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx
             }
         }
 
-        HealthView::HealthFix => {
+        SubView::HealthFix => {
             comp::section_card(ui, "Confirmed fix", |ui| {
                 match state.health_fix_candidate.clone() {
                     Some((fix_id, title)) => {
@@ -1556,22 +1471,18 @@ fn render_health(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx
 
 // ------------------------------------------------------------ backups tile
 
-fn render_backups(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx<'_>) {
-    if let Some(view) = comp::tabs(
+fn render_backups(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCtx<'_>, view: SubView) {
+    sub_view_nav(
         ui,
-        state.backup_view,
+        ctx,
+        Route::safety_backups_restore,
+        view,
         &[
-            (BackupView::BackupList, "Backup list"),
-            (BackupView::BackupPreview, "Preview"),
-            (BackupView::BackupConfirm, "Restore"),
+            (SubView::BackupList, "Backup list"),
+            (SubView::BackupPreview, "Preview"),
+            (SubView::BackupConfirm, "Restore"),
         ],
-    ) {
-        if view != state.backup_view {
-            state.backup_view = view;
-            navigate(Route::safety_backups_restore, view.sub_view(), ctx);
-        }
-    }
-    ui.add_space(6.0);
+    );
 
     if !state.backups_tried && state.backup_error.is_none() && state.loading.is_none() {
         state.schedule(Operation::RefreshBackups, "Listing active save backups…");
@@ -1591,10 +1502,10 @@ fn render_backups(ui: &mut egui::Ui, state: &mut ScreenState, ctx: &mut ScreenCt
         }
     });
 
-    match state.backup_view {
-        BackupView::BackupList => render_backup_list(ui, state),
-        BackupView::BackupPreview => render_backup_preview(ui, state),
-        BackupView::BackupConfirm => render_backup_confirm_view(ui, state, ctx),
+    match view {
+        SubView::BackupPreview => render_backup_preview(ui, state),
+        SubView::BackupConfirm => render_backup_confirm_view(ui, state, ctx),
+        _ => render_backup_list(ui, state),
     }
 }
 
